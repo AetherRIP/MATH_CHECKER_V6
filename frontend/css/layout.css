@@ -222,14 +222,12 @@
   gap: var(--space-2);
 }
 
+/* Read-only server-status readout: plain dot + label. Deliberately free of
+ * track/pill styling so it can never be mistaken for a toggle control. */
 .topbar__status {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: var(--color-card);
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
   white-space: nowrap;

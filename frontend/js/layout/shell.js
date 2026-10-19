@@ -6,6 +6,7 @@
 
 import { html, raw } from "../ui/html.js";
 import { icon } from "../icons.js";
+import { onBackdropClick, onEscape } from "../ui/dismiss.js";
 import { prefs } from "../store.js";
 
 export const navItems = [
@@ -158,7 +159,10 @@ export function initShell() {
   }
 
   drawerToggle?.addEventListener("click", toggleDrawer);
-  overlay?.addEventListener("click", closeDrawer);
+
+  // Escape and backdrop-click dismissal come from the shared dismiss
+  // registry (ui/dismiss.js), the single owner of those triggers.
+  onBackdropClick(overlay, null, closeDrawer);
 
   shell.addEventListener("click", (event) => {
     const target = event.target;
@@ -167,8 +171,8 @@ export function initShell() {
     }
   });
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && shell.classList.contains("is-drawer-open")) {
+  onEscape(() => {
+    if (shell.classList.contains("is-drawer-open")) {
       closeDrawer();
       drawerToggle?.focus();
     }

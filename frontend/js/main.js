@@ -4,7 +4,6 @@ import { render } from "./ui/html.js";
 import { shellTemplate, initShell, setActivePath, setServerStatus } from "./layout/shell.js";
 import { startRouter, DEFAULT_PATH } from "./router.js";
 import { prefs } from "./store.js";
-import { bindModalEvents } from "./ui/modal.js";
 import { api } from "./api.js";
 
 function boot() {
@@ -15,7 +14,6 @@ function boot() {
   document.documentElement.dataset.density = prefs.get("density");
 
   initShell();
-  bindModalEvents();
 
   startRouter({
     container: document.getElementById("content"),

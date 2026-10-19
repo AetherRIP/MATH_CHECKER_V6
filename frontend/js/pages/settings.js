@@ -8,7 +8,7 @@
 
 import { html, render as toHTML } from "../ui/html.js";
 import { pageHeader, card, detailRows } from "../ui/card.js";
-import { button, linkButton } from "../ui/button.js";
+import { button } from "../ui/button.js";
 import { badge } from "../ui/badge.js";
 import { textInput, selectField, checkboxField } from "../ui/form.js";
 import { showToast } from "../ui/toast.js";
@@ -112,7 +112,7 @@ function settingsForm() {
             },
           ])}
           <div class="mt-4">
-            ${linkButton({ label: "Open storage page", href: "#/storage", iconName: "storage" })}
+            ${button({ label: "Open storage page", href: "#/storage", iconName: "storage" })}
           </div>
         `,
       })}

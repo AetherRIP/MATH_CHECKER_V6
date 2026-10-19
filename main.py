@@ -40,7 +40,6 @@ def main(argv: list[str] | None = None) -> int:
         ConfigError,
         ai_provider_configured,
         classroom_configured,
-        ensure_dirs,
         get_config,
     )
 
@@ -49,31 +48,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        cfg = get_config()
+        cfg = get_config(host=args.host, port=args.port)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
-
-    host = args.host or cfg.host
-    port = args.port if args.port is not None else cfg.port
-    if not 1 <= port <= 65535:
-        print("Configuration error: port must be between 1 and 65535.", file=sys.stderr)
-        return 2
-
-    ensure_dirs()
 
     print(f"{APP_NAME} v{APP_VERSION} (Phase 1)")
     if not ai_provider_configured():
         print("Note: no AI provider is configured — the UI runs fully without one.")
     if not classroom_configured():
         print("Note: Google Classroom integration arrives in a later phase.")
-    print(f"Serving on http://{host}:{port}  (Ctrl+C to stop)")
+    print(f"Serving on http://{cfg.host}:{cfg.port}  (Ctrl+C to stop)")
 
     import uvicorn
 
     from app.main import app
 
-    uvicorn.run(app, host=host, port=port, log_level=cfg.log_level.lower())
+    uvicorn.run(app, host=cfg.host, port=cfg.port, log_level=cfg.log_level.lower())
     return 0
 
 

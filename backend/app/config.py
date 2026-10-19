@@ -27,6 +27,7 @@ _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8643
 _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PORT_ERROR = "port must be an integer between 1 and 65535 (set via MC6_PORT or --port)"
 
 
 class ConfigError(ValueError):
@@ -67,19 +68,25 @@ class Config:
     tmp_dir: Path
 
 
-def get_config() -> Config:
-    """Read the current configuration from the environment."""
+def get_config(host: str | None = None, port: int | None = None) -> Config:
+    """Read the current configuration from the environment.
+
+    Optional ``host``/``port`` overrides (the CLI flags) are resolved and
+    validated here too, so every configuration rule — defaults, env parsing
+    and overrides — has exactly one owner.
+    """
     load_env_file()
 
-    host = os.environ.get("MC6_HOST", "").strip() or _DEFAULT_HOST
+    host = (host or "").strip() or os.environ.get("MC6_HOST", "").strip() or _DEFAULT_HOST
 
-    port_raw = os.environ.get("MC6_PORT", "").strip() or str(_DEFAULT_PORT)
-    try:
-        port = int(port_raw)
-    except ValueError as exc:
-        raise ConfigError("MC6_PORT must be an integer between 1 and 65535.") from exc
+    if port is None:
+        port_raw = os.environ.get("MC6_PORT", "").strip() or str(_DEFAULT_PORT)
+        try:
+            port = int(port_raw)
+        except ValueError as exc:
+            raise ConfigError(_PORT_ERROR) from exc
     if not 1 <= port <= 65535:
-        raise ConfigError("MC6_PORT must be an integer between 1 and 65535.")
+        raise ConfigError(_PORT_ERROR)
 
     debug = os.environ.get("MC6_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 

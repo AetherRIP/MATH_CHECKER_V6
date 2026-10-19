@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import storage, system
-from .config import APP_NAME, APP_VERSION, ensure_dirs, get_config
+from .config import APP_NAME, APP_VERSION, ensure_dirs
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
