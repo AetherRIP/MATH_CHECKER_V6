@@ -23,7 +23,7 @@ sys.path.insert(0, str(BACKEND))
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python main.py",
-        description="Math Checker V6 — AI-assisted mathematics homework correction (Phase 1 foundation).",
+        description="Math Checker V6 — AI-assisted mathematics homework correction (Phase 2 backend foundation).",
     )
     parser.add_argument("--host", help="interface to bind (default: MC6_HOST or 127.0.0.1)")
     parser.add_argument("--port", type=int, help="port to listen on (default: MC6_PORT or 8643)")
@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from app.config import (
         APP_NAME,
+        APP_PHASE,
         APP_VERSION,
         ConfigError,
         ai_provider_configured,
@@ -53,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 
-    print(f"{APP_NAME} v{APP_VERSION} (Phase 1)")
+    print(f"{APP_NAME} v{APP_VERSION} (Phase {APP_PHASE})")
     if not ai_provider_configured():
         print("Note: no AI provider is configured — the UI runs fully without one.")
     if not classroom_configured():
@@ -64,7 +65,15 @@ def main(argv: list[str] | None = None) -> int:
 
     from app.main import app
 
-    uvicorn.run(app, host=cfg.host, port=cfg.port, log_level=cfg.log_level.lower())
+    uvicorn.run(
+        app,
+        host=cfg.host,
+        port=cfg.port,
+        log_level=cfg.log_level.lower(),
+        # Request logging is owned by the application middleware, so routine
+        # health checks cannot flood the access log.
+        access_log=False,
+    )
     return 0
 
 

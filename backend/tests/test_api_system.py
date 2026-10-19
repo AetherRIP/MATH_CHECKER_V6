@@ -17,14 +17,23 @@ def test_status_shape_and_honest_feature_flags(client):
     data = response.json()
 
     assert data["app_name"] == "Math Checker V6"
-    assert data["version"] == "6.0.0"
-    assert data["phase"] == 1
+    assert data["version"] == "6.1.0"
+    assert data["phase"] == 2
+
+    assert data["database"] == {
+        "status": "ready",
+        "schema_version": 1,
+        "detail": None,
+    }
 
     features = data["features"]
-    # Phase 1 reality: UI-level features work, processing features do not.
+    # Implemented now.
     assert features["file_selection"] is True
     assert features["ui_preferences"] is True
     assert features["storage_overview"] is True
+    assert features["database"] is True
+    assert features["settings"] is True
+    # Deliberately still false in Phase 2.
     assert features["ai_correction"] is False
     assert features["pdf_processing"] is False
     assert features["grade_submission"] is False
@@ -59,6 +68,17 @@ def test_status_payload_is_plain_json_scalars(client):
     data = client.get("/api/system/status").json()
     # Sanity: the payload serialises cleanly and contains no nested surprises.
     assert json.loads(json.dumps(data)) == data
+
+
+def test_request_id_header_is_present(client):
+    assert client.get("/api/health").headers.get("x-request-id")
+    assert client.get("/api/system/status").headers.get("x-request-id")
+
+
+def test_openapi_document_is_available(client):
+    response = client.get("/api/openapi.json")
+    assert response.status_code == 200
+    assert response.json()["info"]["title"] == "Math Checker V6"
 
 
 def test_unknown_api_route_is_404(client):

@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "Math Checker V6"
-APP_VERSION = "6.0.0"
-APP_PHASE = 1
+APP_VERSION = "6.1.0"
+APP_PHASE = 2
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"

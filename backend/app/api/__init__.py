@@ -1,1 +1,1 @@
-"""HTTP API route modules (Phase 1: system status and storage overview)."""
+"""HTTP API route modules (Phase 2: system, settings, database and storage)."""

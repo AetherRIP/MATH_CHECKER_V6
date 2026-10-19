@@ -1,13 +1,14 @@
 """System endpoints: liveness and readiness.
 
-These are among the only API calls the Phase 1 UI makes. Responses contain
-explicit booleans and version strings only — never secrets, credentials, or
-server filesystem paths.
+``/api/health`` is a liveness probe only: the process is serving requests.
+``/api/system/status`` reports real readiness, including whether the local
+database initialized. Responses contain explicit flags and version strings —
+never secrets, credentials or server filesystem paths.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from ..config import (
     APP_NAME,
@@ -16,6 +17,7 @@ from ..config import (
     ai_provider_configured,
     classroom_configured,
 )
+from ..models import DatabaseStatus
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -27,23 +29,34 @@ def health() -> dict:
 
 
 @router.get("/system/status")
-def system_status() -> dict:
-    """Readiness summary: version and honest feature availability.
+def system_status(request: Request) -> dict:
+    """Readiness summary: version, database state and honest feature flags."""
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        database = DatabaseStatus(
+            ready=False,
+            detail="Database is unavailable.",
+        )
+    else:
+        database = storage.database_status()
 
-    ``*_configured`` flags reflect real state (whether the corresponding
-    environment configuration exists). Feature flags describe what this
-    phase actually implements — nothing is claimed as working before it is.
-    """
     return {
         "app_name": APP_NAME,
         "version": APP_VERSION,
         "phase": APP_PHASE,
         "ai_provider_configured": ai_provider_configured(),
         "classroom_configured": classroom_configured(),
+        "database": {
+            "status": "ready" if database.ready else "unavailable",
+            "schema_version": database.schema_version,
+            "detail": database.detail,
+        },
         "features": {
             "file_selection": True,
             "ui_preferences": True,
             "storage_overview": True,
+            "database": True,
+            "settings": True,
             "ai_correction": False,
             "pdf_processing": False,
             "grade_submission": False,

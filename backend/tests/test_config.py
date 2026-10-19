@@ -16,6 +16,7 @@ def test_defaults(client, monkeypatch):
     assert cfg.port == 8643
     assert cfg.debug is False
     assert cfg.log_level == "INFO"
+    assert cfg.database_path == cfg.data_dir / "app.db"
 
 
 def test_environment_overrides(client, monkeypatch):

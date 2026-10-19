@@ -1,4 +1,9 @@
-"""Tests for /api/storage/summary — real, bounded, path-free measurements."""
+"""Tests for /api/storage/summary — real, bounded, path-free measurements.
+
+Phase 2 puts the SQLite database inside the application data directory, so
+the "persistent" category legitimately includes it. These tests compute the
+database files from disk instead of assuming an empty directory.
+"""
 
 from __future__ import annotations
 
@@ -14,18 +19,40 @@ def category_map(data: dict) -> dict:
     return {item["id"]: item for item in data["categories"]}
 
 
-def test_empty_data_dir_reports_all_zero(client):
+def database_files(data_dir: Path) -> list[Path]:
+    return sorted(path for path in data_dir.glob("app.db*") if path.is_file())
+
+
+def database_bytes(data_dir: Path) -> int:
+    return sum(path.stat().st_size for path in database_files(data_dir))
+
+
+def test_startup_stores_only_the_database(client, tmp_path):
+    data_dir = tmp_path / "data"
+    db_files = database_files(data_dir)
+    assert db_files, "the application should have created its SQLite database"
+
     data = client.get("/api/storage/summary").json()
-    assert data["total"] == {"files": 0, "bytes": 0}
+    categories = category_map(data)
+
+    assert categories["persistent"]["files"] == len(db_files)
+    assert categories["persistent"]["bytes"] == database_bytes(data_dir)
+    for category in ("temporary", "reports", "cache"):
+        assert categories[category]["files"] == 0
+        assert categories[category]["bytes"] == 0
+
+    assert data["total"] == {
+        "files": len(db_files),
+        "bytes": database_bytes(data_dir),
+    }
     assert data["truncated"] is False
-    assert len(data["categories"]) == 4
-    for category in data["categories"]:
-        assert category["files"] == 0
-        assert category["bytes"] == 0
 
 
 def test_files_are_counted_per_category(client, tmp_path):
     data_dir = tmp_path / "data"
+    db_files = len(database_files(data_dir))
+    db_size = database_bytes(data_dir)
+
     write(data_dir / "notes.txt", 3)
     write(data_dir / "records.csv", 7)
     write(data_dir / "tmp" / "scratch.bin", 10)
@@ -37,8 +64,8 @@ def test_files_are_counted_per_category(client, tmp_path):
     data = client.get("/api/storage/summary").json()
     categories = category_map(data)
 
-    assert categories["persistent"]["files"] == 2
-    assert categories["persistent"]["bytes"] == 10
+    assert categories["persistent"]["files"] == 2 + db_files
+    assert categories["persistent"]["bytes"] == 10 + db_size
     assert categories["temporary"]["files"] == 1
     assert categories["temporary"]["bytes"] == 10
     assert categories["reports"]["files"] == 1
@@ -46,8 +73,8 @@ def test_files_are_counted_per_category(client, tmp_path):
     assert categories["cache"]["files"] == 1
     assert categories["cache"]["bytes"] == 7
 
-    assert data["total"]["files"] == 5
-    assert data["total"]["bytes"] == 32
+    assert data["total"]["files"] == 5 + db_files
+    assert data["total"]["bytes"] == 32 + db_size
     assert data["truncated"] is False
 
 
@@ -64,6 +91,7 @@ def test_summary_never_returns_filesystem_paths(client, tmp_path):
 
 def test_walk_is_bounded_and_reports_truncation(client, monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
+    db_count = len(database_files(data_dir))
     for index in range(6):
         write(data_dir / "tmp" / f"file-{index}.bin", 1)
 
@@ -71,7 +99,7 @@ def test_walk_is_bounded_and_reports_truncation(client, monkeypatch, tmp_path):
     data = client.get("/api/storage/summary").json()
     assert data["truncated"] is True
     # A lower bound, never an over-count.
-    assert data["total"]["files"] <= 6
+    assert data["total"]["files"] <= 6 + db_count
 
 
 def test_deep_directories_are_not_endlessly_walked(client, monkeypatch, tmp_path):
