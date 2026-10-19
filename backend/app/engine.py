@@ -1,15 +1,17 @@
-"""Phase 2 correction-engine contract, and the Phase 1 stub.
+"""Future correction-engine contract (Phase 3), and the current honest stub.
 
 This module is the backend's integration seam for AI correction. It is the
 executable half of the contract: the data types and the
-:class:`CorrectionEngine` protocol that Phase 2 implements. The HTTP surface,
-job lifecycle and frontend wiring are specified in ``docs/phase-2-contract.md``.
+:class:`CorrectionEngine` protocol that Phase 3 implements. The HTTP surface,
+job lifecycle and frontend wiring are specified in
+``docs/correction-engine-contract.md``.
 
-Phase 1 ships only :class:`UnavailableEngine` — a stub that reports honestly
-that correction is not available yet and raises :class:`EngineUnavailableError`
-instead of inventing results. No engine code exists here, by design.
+The current build ships only :class:`UnavailableEngine` — a stub that reports
+honestly that correction is not available yet and raises
+:class:`EngineUnavailableError` instead of inventing results. No engine code
+exists here, by design.
 
-Rules for Phase 2 implementations:
+Rules for Phase 3 implementations:
 
 * Implement :class:`CorrectionEngine` and register it in :func:`get_engine`.
 * Validate every request with :func:`validate_request`, the single owner of
@@ -37,7 +39,7 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 
 
 class JobStatus(str, Enum):
-    """Lifecycle states of a correction job (see docs/phase-2-contract.md)."""
+    """Lifecycle states of a correction job (see docs/correction-engine-contract.md)."""
 
     QUEUED = "queued"
     PROCESSING = "processing"
@@ -155,7 +157,7 @@ def validate_request(request: CorrectionRequest) -> None:
     """Raise :class:`UnsupportedInputError` when a request breaks the policy.
 
     This function is the single owner of accepted-input rules on the backend.
-    Phase 2 engines must call it first; nothing downstream re-checks limits.
+    Phase 3 engines must call it first; nothing downstream re-checks limits.
     """
     if not request.files:
         raise UnsupportedInputError("No files were submitted. Attach at least one homework file.")
@@ -191,14 +193,14 @@ class CorrectionEngine(Protocol):
 
 
 class UnavailableEngine:
-    """The Phase 1 stub: honest about being unavailable, invents nothing.
+    """The honest stub: reports unavailability and invents nothing.
 
     Every job method raises :class:`EngineUnavailableError` rather than
-    returning placeholder data, so no caller can mistake Phase 1 for a
-    working correction pipeline.
+    returning placeholder data, so no caller can mistake the backend
+    foundation for a working correction pipeline.
     """
 
-    _REASON = "The correction engine ships in Phase 2; no jobs can run yet."
+    _REASON = "The correction engine ships in a later phase (Phase 3); no jobs can run yet."
 
     def describe(self) -> EngineInfo:
         return EngineInfo(name="unavailable", available=False, reason=self._REASON)
@@ -216,9 +218,9 @@ class UnavailableEngine:
 def get_engine() -> CorrectionEngine:
     """Return the engine to use for correction jobs.
 
-    Phase 1 always returns :class:`UnavailableEngine`. Phase 2 dispatches
-    here on provider configuration and registers real engines — callers
-    depend only on the :class:`CorrectionEngine` protocol, never on a
+    The current build always returns :class:`UnavailableEngine`. Phase 3
+    dispatches here on provider configuration and registers real engines —
+    callers depend only on the :class:`CorrectionEngine` protocol, never on a
     concrete engine class.
     """
     return UnavailableEngine()

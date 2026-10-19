@@ -1,4 +1,4 @@
-# RUNTIME dependencies of Math Checker V6 (Phase 1).
+# RUNTIME dependencies of Math Checker V6 (Phase 2).
 #
 # Exactly two direct dependencies: the ASGI framework and the server.
 # Everything else in the standard library. Test-only packages live in

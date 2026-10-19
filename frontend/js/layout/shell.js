@@ -20,7 +20,9 @@ export const footerNavItems = [
   { path: "/settings", label: "Settings", iconName: "settings" },
 ];
 
-export const APP_VERSION_LABEL = "v6.0.0 · Phase 1";
+// The real version and phase come from /api/system/status; the shell renders
+// a neutral placeholder until that response arrives.
+export const APP_VERSION_PLACEHOLDER = "—";
 
 /** Pure helper: is this nav item active for the given route path? */
 export function activeNavMatch(routePath, itemPath) {
@@ -58,7 +60,7 @@ export function shellTemplate({ activePath } = {}) {
             </svg>
             <span class="sidebar__names">
               <span class="sidebar__name">Math Checker V6</span>
-              <span class="sidebar__version">${APP_VERSION_LABEL}</span>
+              <span class="sidebar__version" data-app-version>${APP_VERSION_PLACEHOLDER}</span>
             </span>
           </a>
         </div>
@@ -120,6 +122,12 @@ export function setActivePath(path, routeTitle) {
   }
   const title = shell.querySelector("[data-page-title]");
   if (title && routeTitle) title.textContent = routeTitle;
+}
+
+export function setAppVersion(label) {
+  for (const element of document.querySelectorAll("[data-app-version]")) {
+    element.textContent = label;
+  }
 }
 
 export function setServerStatus(state, label) {

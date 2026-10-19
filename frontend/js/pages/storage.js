@@ -2,7 +2,7 @@
  *
  * Numbers come from the bounded /api/storage/summary walk computed on request
  * — nothing is scanned in the background and nothing is fabricated. No
- * deletion or migration actions exist in Phase 1.
+ * deletion or migration actions exist yet.
  */
 
 import { html, render as toHTML } from "../ui/html.js";

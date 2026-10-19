@@ -126,7 +126,7 @@ def ensure_dirs() -> Config:
 
 
 def ai_provider_configured() -> bool:
-    """True when an AI provider key is present (Phase 2+ feature)."""
+    """True when an AI provider key is present (Phase 3+ feature)."""
     return bool(os.environ.get("MC6_AI_API_KEY", "").strip())
 
 

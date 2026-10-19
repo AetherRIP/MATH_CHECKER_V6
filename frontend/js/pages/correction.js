@@ -1,10 +1,11 @@
-/* AI Correction workspace (Phase 1: layout and client-side behaviour only).
+/* AI Correction workspace (layout and client-side behaviour only).
  *
  * Implemented now: selecting and validating submission files in the browser,
- * reviewing and removing them, and keeping an assignment/options draft.
- * Arrives in Phase 2: uploading for processing, AI correction, PDF parsing,
- * grade submission and report generation. The Start button is disabled with
- * an explanation — never a dead control.
+ * reviewing and removing them, and keeping an assignment/options draft. The
+ * upload limit and default feedback detail are read from the server settings.
+ * Arrives in a later phase (Phase 3): uploading for processing, AI correction,
+ * PDF parsing, grade submission and report generation. The Start button is
+ * disabled with an explanation — never a dead control.
  */
 
 import { html, render as toHTML } from "../ui/html.js";
@@ -20,10 +21,15 @@ import { modalTemplate, openModal } from "../ui/modal.js";
 import { showToast } from "../ui/toast.js";
 import { prefs } from "../store.js";
 import { formatBytes } from "../format.js";
+import { api } from "../api.js";
 
 export const ACCEPTED_TYPES = [".pdf", ".png", ".jpg", ".jpeg"];
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const PAGE_SIZE = 8;
+
+// Server settings may lower the accepted size; the engine contract caps it at 25 MB.
+let maxFileBytes = MAX_FILE_BYTES;
+let optionsTouched = false;
 
 const draft = {
   files: [],
@@ -117,9 +123,9 @@ function submissionsPanel() {
               aria-describedby="submission-files-help"
               data-file-input
             >
-            <p class="field__help" id="submission-files-help">
-              PDF, PNG or JPG files, up to 25 MB each. In Phase 1 the files stay in your browser —
-              upload and processing arrive in Phase 2.
+            <p class="field__help" id="submission-files-help" data-fill="max-upload-help">
+              PDF, PNG or JPG files, up to 25 MB each. Files stay in your browser for now —
+              uploading and processing arrive in a later phase.
             </p>
           </div>
         </div>
@@ -181,7 +187,7 @@ function optionsPanel() {
   return html`
     ${card({
       title: "Correction options",
-      description: "These options are stored with the job draft; processing arrives in Phase 2.",
+      description: "These options are stored with the job draft; processing arrives in a later phase.",
       body: html`
         ${checkboxField({
           id: "opt-double-check",
@@ -227,9 +233,9 @@ function jobsPanel() {
       body: html`
         ${emptyState({
           iconName: "clock",
-          title: "No correction jobs in Phase 1",
+          title: "No correction jobs yet",
           description:
-            "The job queue and correction engine arrive in Phase 2. Files and options you prepare now are kept as a draft for that workflow.",
+            "The job queue and correction engine arrive in a later phase. Files and options you prepare now are kept as a draft for that workflow.",
           compact: true,
         })}
         <div class="mt-5">
@@ -238,7 +244,7 @@ function jobsPanel() {
             variant: "primary",
             iconName: "correction",
             disabled: true,
-            note: "Available in Phase 2 — the AI correction engine is not implemented yet.",
+            note: "Available in a later phase — the AI correction engine is not implemented yet.",
           })}
         </div>
       `,
@@ -254,7 +260,7 @@ function resultsPanel() {
       body: emptyState({
         iconName: "check-circle",
         title: "No results yet",
-        description: "Results appear after correction jobs can run in Phase 2.",
+        description: "Results appear after correction jobs can run in a later phase.",
         compact: true,
       }),
     })}
@@ -266,8 +272,8 @@ export function render() {
     ${pageHeader({
       title: "AI Correction",
       description:
-        "Prepare homework submissions for AI-assisted correction. File selection and configuration work today; processing arrives in Phase 2.",
-      actions: badge({ label: "Processing arrives in Phase 2", tone: "warning", iconName: "info" }),
+        "Prepare homework submissions for AI-assisted correction. File selection and configuration work today; processing arrives in a later phase.",
+      actions: badge({ label: "Processing arrives in a later phase", tone: "warning", iconName: "info" }),
     })}
     ${tabsTemplate({
       id: "correction",
@@ -311,7 +317,7 @@ function addFiles(root, fileList) {
   let added = 0;
   for (const file of Array.from(fileList)) {
     const typeError = validateFileType(file.name, ACCEPTED_TYPES);
-    const sizeError = typeError ? null : validateFileSize(file.size, MAX_FILE_BYTES);
+    const sizeError = typeError ? null : validateFileSize(file.size, maxFileBytes);
     const error = typeError || sizeError;
     if (error) {
       draft.fileErrors.push(`${file.name}: ${error}`);
@@ -333,8 +339,31 @@ function addFiles(root, fileList) {
   refreshReview(root);
 }
 
+async function loadServerSettings(root) {
+  try {
+    const payload = await api.settings.get();
+    const settings = payload.settings || {};
+    const mb = Number(settings.max_upload_mb);
+    if (Number.isFinite(mb) && mb >= 1 && mb <= 25) {
+      maxFileBytes = mb * 1024 * 1024;
+      const help = root.querySelector('[data-fill="max-upload-help"]');
+      if (help) {
+        help.textContent = `PDF, PNG or JPG files, up to ${mb} MB each. Files stay in your browser for now — uploading and processing arrive in a later phase.`;
+      }
+    }
+    if (!optionsTouched && settings.default_feedback_detail) {
+      draft.options.feedbackDetail = settings.default_feedback_detail;
+      const select = root.querySelector("#opt-feedback-detail");
+      if (select) select.value = settings.default_feedback_detail;
+    }
+  } catch {
+    // The page keeps the documented 25 MB and detailed-feedback defaults.
+  }
+}
+
 export function mount(root) {
   initTabs(root);
+  loadServerSettings(root);
 
   root.addEventListener("change", (event) => {
     const target = event.target;
@@ -347,6 +376,7 @@ export function mount(root) {
     const group = target.getAttribute("data-draft-group");
     const key = target.getAttribute("data-draft-key");
     if (group && key && target instanceof HTMLInputElement) {
+      if (group === "options") optionsTouched = true;
       draft[group][key] = target.type === "checkbox" ? target.checked : target.value;
     }
   });
@@ -357,6 +387,7 @@ export function mount(root) {
     const group = target.getAttribute("data-draft-group");
     const key = target.getAttribute("data-draft-key");
     if (group && key && target instanceof HTMLInputElement && target.type !== "checkbox") {
+      if (group === "options") optionsTouched = true;
       draft[group][key] = target.value;
     }
   });

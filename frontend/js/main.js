@@ -1,7 +1,7 @@
 /* Math Checker V6 — application bootstrap. */
 
 import { render } from "./ui/html.js";
-import { shellTemplate, initShell, setActivePath, setServerStatus } from "./layout/shell.js";
+import { shellTemplate, initShell, setActivePath, setAppVersion, setServerStatus } from "./layout/shell.js";
 import { startRouter, DEFAULT_PATH } from "./router.js";
 import { prefs } from "./store.js";
 import { api } from "./api.js";
@@ -21,10 +21,17 @@ function boot() {
     onNavigate: (route) => setActivePath(route.path, route.title),
   });
 
-  // One status request feeds the top bar chip; pages share the same response.
+  // One status request feeds the top bar chip and the real version label;
+  // pages share the same cached response.
   api.systemStatus().then(
-    () => setServerStatus("ready", "Server ready"),
-    () => setServerStatus("offline", "Server unreachable"),
+    (status) => {
+      setServerStatus("ready", "Server ready");
+      setAppVersion(`v${status.version} · Phase ${status.phase}`);
+    },
+    () => {
+      setServerStatus("offline", "Server unreachable");
+      setAppVersion("Version unavailable");
+    },
   );
 
   window.addEventListener("error", (event) => {

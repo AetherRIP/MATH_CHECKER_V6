@@ -28,6 +28,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--host", help="interface to bind (default: MC6_HOST or 127.0.0.1)")
     parser.add_argument("--port", type=int, help="port to listen on (default: MC6_PORT or 8643)")
     parser.add_argument("--version", action="store_true", help="print the version and exit")
+    parser.add_argument(
+        "--seed-dev",
+        action="store_true",
+        help="insert deterministic development fixtures and exit",
+    )
     return parser.parse_args(argv)
 
 
@@ -53,6 +58,24 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+
+    if args.seed_dev:
+        from app.config import ensure_dirs
+        from app.db import Database
+        from app.dev_fixtures import seed_development_data
+        from app.storage import Storage
+
+        try:
+            data_cfg = ensure_dirs()
+            database = Database(data_cfg.database_path)
+            database.initialize()
+            result = seed_development_data(Storage(database))
+        except Exception as exc:  # report the failure instead of a traceback
+            print(f"Could not seed development fixtures: {exc}", file=sys.stderr)
+            return 1
+        summary = ", ".join(f"{key}={value}" for key, value in result.items())
+        print(f"Development fixtures ready in {data_cfg.database_path.name}: {summary}")
+        return 0
 
     print(f"{APP_NAME} v{APP_VERSION} (Phase {APP_PHASE})")
     if not ai_provider_configured():

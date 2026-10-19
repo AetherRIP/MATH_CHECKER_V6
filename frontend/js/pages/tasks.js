@@ -1,8 +1,8 @@
 /* Task Manager: the future home of background-work visibility.
  *
- * Phase 1 shows the planned task categories with honest empty states. No
- * queue, worker or progress is simulated — the task system itself arrives in
- * a later phase.
+ * The planned task categories are shown with honest empty states. No queue,
+ * worker or progress is simulated — the task system itself arrives in a
+ * later phase.
  */
 
 import { html } from "../ui/html.js";
@@ -39,7 +39,7 @@ export function render() {
     ${pageHeader({
       title: "Task Manager",
       description:
-        "Visibility for background work once it exists. Later phases add task states, retries, logs and cancellation here — no task system runs in Phase 1.",
+        "Visibility for background work once it exists. Later phases add task states, retries, logs and cancellation here — no task system exists yet.",
       actions: badge({ label: "Task processing planned", tone: "warning", iconName: "clock" }),
     })}
     <div class="grid-2">

@@ -1,4 +1,4 @@
-"""Tests for the Phase 2 correction-engine contract and its Phase 1 stub.
+"""Tests for the Phase 3 correction-engine contract and its honest stub.
 
 These pin the contract's promises: the stub is honest about being
 unavailable, the input policy has exactly one owner, and the documented
@@ -61,7 +61,7 @@ def test_describe_is_honest_in_phase_1() -> None:
     assert isinstance(info, EngineInfo)
     assert info.available is False
     assert info.name
-    assert info.reason and "Phase 2" in info.reason
+    assert info.reason and "later phase" in info.reason
 
 
 def test_submit_refuses_instead_of_inventing_results(tmp_path: Path) -> None:
@@ -84,7 +84,7 @@ def test_unavailable_messages_are_user_safe() -> None:
     with pytest.raises(EngineUnavailableError) as excinfo:
         asyncio.run(UnavailableEngine().get_job("x"))
     message = str(excinfo.value)
-    assert "Phase 2" in message
+    assert "later phase" in message
     assert "/" not in message and "\\" not in message  # no filesystem paths
 
 
@@ -116,14 +116,14 @@ def test_validate_request_enforces_the_size_boundary(tmp_path: Path) -> None:
 
 
 def test_input_policy_matches_the_documented_contract() -> None:
-    # docs/phase-2-contract.md and frontend/js/pages/correction.js state these
-    # exact limits; if this test fails, the contract has drifted.
+    # docs/correction-engine-contract.md and frontend/js/pages/correction.js
+    # state these exact limits; if this test fails, the contract has drifted.
     assert MAX_FILE_BYTES == 25 * 1024 * 1024
     assert ACCEPTED_MEDIA_TYPES == ("application/pdf", "image/png", "image/jpeg")
 
 
 def test_error_types_exist_for_every_documented_failure() -> None:
-    # The HTTP mapping in docs/phase-2-contract.md names these classes.
+    # The HTTP mapping in docs/correction-engine-contract.md names these classes.
     assert issubclass(EngineUnavailableError, Exception)
     assert issubclass(UnsupportedInputError, Exception)
     assert issubclass(JobNotFoundError, Exception)

@@ -2,6 +2,12 @@
 
 **Scope:** foundation & UI framework · **Status:** complete · **Version:** 6.0.0 (Phase 1)
 
+> **Roadmap note (added in Phase 2):** this report records the Phase 1 state.
+> Phase 2 later added the backend foundation (SQLite storage, settings and
+> statistics APIs, degraded-start handling, and live UI wiring). The AI
+> correction engine described here as “Phase 2” is now planned for **Phase 3**
+> and is specified in `docs/correction-engine-contract.md`.
+
 ---
 
 ## 1. Architecture selected and why
@@ -138,7 +144,7 @@ dashboard only (~60 KB raw / ~20 KB gzip); other pages arrive on demand.
 - Preference storage is per-browser (localStorage). A future account system
   would move preferences server-side.
 - Correction drafts live in page memory for the session; persistent drafts
-  arrive with Phase 2 processing.
+  arrive with later-phase processing.
 - Light/dark theme switching is not offered (dark theme only), though all
   colours are tokens and could support one later.
 
@@ -203,7 +209,7 @@ V5 untouched (see §12); no heavyweight dependencies; both test suites pass. ✔
 and idle ~57 MB measured; dashboard issues exactly one status request. ✔
 
 **Documentation** — README matches the code; implemented vs deferred clearly
-separated here and in the UI; limitations recorded; the Phase 2 boundary is
+separated here and in the UI; limitations recorded; the engine boundary is
 documented. ✔
 
 ## 12. Confirmation that V5 was left unchanged
@@ -223,5 +229,5 @@ manifest with reproducible install, `.env.example`, `.gitignore`, README,
 `docs/architecture.md`, this report, automated tests for routing and core
 interactions, and a single-command launch. The definition of success — a
 polished, consistent, lightweight, working UI foundation extendable without
-another architectural rebuild — is satisfied; Phase 2 plugs into the seams
+another architectural rebuild — is satisfied; Phase 3 plugs into the seams
 documented in `docs/architecture.md` §6.

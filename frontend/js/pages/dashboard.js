@@ -1,7 +1,7 @@
 /* Dashboard: an honest overview of the correction system.
  *
- * All counts are real (zero until correction jobs exist in later phases) and
- * readiness rows are read live from the server. Nothing here is sample data.
+ * Counts come from the local database and readiness comes from the server.
+ * Nothing here is sample data; loading, empty and error states are real.
  */
 
 import { html, render as toHTML } from "../ui/html.js";
@@ -11,10 +11,13 @@ import { badge } from "../ui/badge.js";
 import { dataTable } from "../ui/table.js";
 import { emptyState, errorState, loadingState } from "../ui/states.js";
 import { api } from "../api.js";
+import { formatCount } from "../format.js";
 
 const INTEGRATION_SOURCES = 2;
 
-function readinessRows(status) {
+export function readinessRows(status) {
+  const database = status.database || {};
+  const databaseReady = database.status === "ready";
   return [
     {
       label: "Application interface",
@@ -23,6 +26,16 @@ function readinessRows(status) {
     {
       label: "Backend API",
       value: badge({ label: "Reachable", tone: "success", iconName: "check-circle" }),
+    },
+    {
+      label: "Database",
+      value: databaseReady
+        ? badge({
+            label: `Ready · schema ${database.schema_version}`,
+            tone: "success",
+            iconName: "check-circle",
+          })
+        : badge({ label: "Unavailable", tone: "error" }),
     },
     {
       label: "AI provider",
@@ -38,7 +51,7 @@ function readinessRows(status) {
     },
     {
       label: "Correction processing",
-      value: badge({ label: "Planned · Phase 2", tone: "warning" }),
+      value: badge({ label: "Planned · Phase 3", tone: "warning" }),
     },
     {
       label: "Background tasks",
@@ -47,12 +60,46 @@ function readinessRows(status) {
   ];
 }
 
+export function submissionStatusRows(counts) {
+  return [
+    { key: "missing", label: "Missing", count: counts.missing },
+    { key: "draft", label: "Draft", count: counts.draft },
+    { key: "submitted", label: "Submitted", count: counts.submitted },
+    { key: "graded", label: "Graded", count: counts.graded },
+    { key: "failed", label: "Failed", count: counts.failed },
+  ];
+}
+
+export function statsHTML(counts) {
+  if (!counts || counts.total === 0) {
+    return emptyState({
+      iconName: "storage",
+      title: "No submissions recorded yet",
+      description:
+        "Students, assignments and submissions appear here as they are added to the local database.",
+      compact: true,
+    });
+  }
+
+  return dataTable({
+    caption: "Counts are read from the local database when this page opens.",
+    columns: [
+      { key: "status", label: "Status" },
+      { key: "count", label: "Submissions", numeric: true },
+    ],
+    rows: submissionStatusRows(counts).map((row) => ({
+      key: row.key,
+      cells: { status: row.label, count: formatCount(row.count) },
+    })),
+  });
+}
+
 export function render() {
   return html`
     ${pageHeader({
       title: "Dashboard",
       description:
-        "A quick overview of the correction system. Phase 1 lays the foundation — correction data appears here once jobs can run in Phase 2.",
+        "A quick overview of the correction system. Counts and readiness are read from the running backend.",
       actions: html`
         ${button({ label: "New correction", variant: "primary", iconName: "correction", href: "#/correction" })}
         ${button({ label: "Settings", iconName: "settings", href: "#/settings" })}
@@ -64,22 +111,22 @@ export function render() {
       <div class="stat-grid">
         ${statCard({
           iconName: "tasks",
-          label: "Correction jobs",
-          value: "0",
-          hint: "No correction jobs yet",
+          label: "Students",
+          value: html`<span data-fill="stat-students">—</span>`,
+          hint: "Stored in the local database",
         })}
         ${statCard({
           iconName: "file",
-          label: "Submissions processed",
-          value: "0",
-          hint: "Nothing processed yet",
+          label: "Assignments",
+          value: html`<span data-fill="stat-assignments">—</span>`,
+          hint: "Including chapter and lesson codes",
           tone: "info",
         })}
         ${statCard({
           iconName: "storage",
-          label: "Reports generated",
-          value: "0",
-          hint: "No reports yet",
+          label: "Submissions",
+          value: html`<span data-fill="stat-submissions">—</span>`,
+          hint: html`<span data-fill="stat-submissions-hint">Loading…</span>`,
           tone: "success",
         })}
         ${statCard({
@@ -93,6 +140,13 @@ export function render() {
     </section>
 
     <div class="stack">
+      ${card({
+        title: "Submissions by status",
+        description: "Live counts of student work recorded in the local database.",
+        actions: button({ label: "Refresh", iconName: "refresh", attrs: 'data-action="retry-stats"' }),
+        body: html`<div data-section="stats">${loadingState({ label: "Reading database statistics…" })}</div>`,
+      })}
+
       ${card({
         title: "Recent correction jobs",
         description: "The latest homework correction jobs and their states.",
@@ -108,7 +162,7 @@ export function render() {
             iconName: "tasks",
             title: "No correction jobs yet",
             description:
-              "Correction jobs appear here once the AI correction engine is available in Phase 2.",
+              "Correction jobs appear here once the AI correction engine is available in Phase 3.",
           },
         }),
       })}
@@ -152,6 +206,44 @@ export function render() {
   `;
 }
 
+function setText(root, selector, value) {
+  const element = root.querySelector(selector);
+  if (element) element.textContent = value;
+}
+
+async function loadStats(root) {
+  const section = root.querySelector('[data-section="stats"]');
+  if (section) section.innerHTML = toHTML(loadingState({ label: "Reading database statistics…" }));
+
+  try {
+    const data = await api.databaseStats();
+    const counts = data.counts;
+    setText(root, '[data-fill="stat-students"]', formatCount(counts.students));
+    setText(root, '[data-fill="stat-assignments"]', formatCount(counts.assignments));
+    setText(root, '[data-fill="stat-submissions"]', formatCount(counts.submissions.total));
+    setText(
+      root,
+      '[data-fill="stat-submissions-hint"]',
+      `${counts.submissions.missing} missing · ${counts.submissions.draft} drafts · ${counts.submissions.graded} graded`,
+    );
+    if (section) section.innerHTML = toHTML(statsHTML(counts.submissions));
+  } catch (err) {
+    for (const selector of ['[data-fill="stat-students"]', '[data-fill="stat-assignments"]', '[data-fill="stat-submissions"]']) {
+      setText(root, selector, "—");
+    }
+    setText(root, '[data-fill="stat-submissions-hint"]', "Statistics unavailable");
+    if (section) {
+      section.innerHTML = toHTML(
+        errorState({
+          title: "Database statistics unavailable",
+          description: "The application server could not be reached to read the local database.",
+          actions: button({ label: "Retry", iconName: "refresh", attrs: 'data-action="retry-stats"' }),
+        }),
+      );
+    }
+  }
+}
+
 async function loadReadiness(root) {
   const section = root.querySelector('[data-section="readiness"]');
   const fill = root.querySelector('[data-fill="integrations"]');
@@ -176,10 +268,15 @@ async function loadReadiness(root) {
 }
 
 export function mount(root) {
+  loadStats(root);
   loadReadiness(root);
   root.addEventListener("click", (event) => {
     const target = event.target;
-    if (target instanceof Element && target.closest('[data-action="retry-status"]')) {
+    if (!(target instanceof Element)) return;
+    if (target.closest('[data-action="retry-stats"]')) {
+      loadStats(root);
+    }
+    if (target.closest('[data-action="retry-status"]')) {
       loadReadiness(root);
     }
   });

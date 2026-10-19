@@ -1,15 +1,16 @@
-# Phase 2 contract — the correction engine
+# Correction-engine contract (Phase 3)
 
 **Status: contract only. No engine code exists.** This document and
-`backend/app/engine.py` were written *before* any engine implementation so
-that Phase 2 has a fixed seam to build against. The engine module is the
-**executable half** of the contract (data types, the `CorrectionEngine`
-protocol, the input policy); this document is the **behavioral half** (HTTP
-surface, job lifecycle, error semantics, frontend wiring).
+`backend/app/engine.py` are the fixed seam for the correction engine. The
+engine module is the **executable half** of the contract (data types, the
+`CorrectionEngine` protocol, the input policy); this document is the
+**behavioral half** (HTTP surface, job lifecycle, error semantics, frontend
+wiring).
 
-Phase 1 ships `UnavailableEngine`, a stub that reports honestly that
-correction cannot run yet and raises `EngineUnavailableError` instead of
-inventing results. Nothing in Phase 1 claims to grade anything.
+The current build (Phase 2) ships `UnavailableEngine`, a stub that reports
+honestly that correction cannot run yet and raises `EngineUnavailableError`
+instead of inventing results. Nothing in Phase 2 claims to grade anything,
+and the engine itself is implemented in Phase 3.
 
 ---
 
@@ -35,7 +36,7 @@ filenames, media types and sizes.
 |---|---|---|
 | `SubmissionFile` | `path` (server-only), `filename`, `media_type`, `size_bytes` | One uploaded file. |
 | `AssignmentContext` | `title`, `instructions`, `mark_scheme` | From the correction page's assignment draft. Empty strings allowed. |
-| `CorrectionOptions` | `partial_credit: bool`, `max_score: float \| null` | From the options draft. Extensible in Phase 2; fields are added, never repurposed. |
+| `CorrectionOptions` | `partial_credit: bool`, `max_score: float \| null` | From the options draft. Extensible in Phase 3; fields are added, never repurposed. |
 | `CorrectionRequest` | `files`, `assignment`, `options` | One grading batch. |
 | `MarkedItem` | `label`, `awarded`, `out_of`, `feedback` | One question's verdict. `awarded`/`out_of` are `null` when not applicable. |
 | `CorrectionReport` | `job_id`, `summary`, `awarded`, `out_of`, `items` | The grading output. |
@@ -75,7 +76,7 @@ the three places cannot drift silently. The backend check is authoritative.
   read through status endpoints; optional SSE for live progress is an
   explicitly later extension (architecture §6).
 
-## 4. HTTP API (Phase 2 adds these routes)
+## 4. HTTP API (Phase 3 adds these routes)
 
 New router: `backend/app/api/corrections.py`, registered by `main.py` like
 the existing routers. All errors use the existing envelope:
@@ -109,7 +110,7 @@ traces or paths (existing rule, architecture §3).
 The frontend rule stands: **pages never call `fetch()`** — `api.js` is the
 only module that talks to the backend.
 
-| Seam | Change in Phase 2 |
+| Seam | Change in Phase 3 |
 |---|---|
 | `frontend/js/api.js` | Adds `corrections.submit(formData)`, `corrections.list()`, `corrections.get(id)`, `corrections.report(id)` next to the existing `health` / `storageSummary` / `systemStatus`. |
 | `frontend/js/pages/correction.js` | "Start correction" enables **only** when `systemStatus().features.ai_correction` is true; its explanation note then reflects `EngineInfo.reason` when unavailable. The review list, options draft and confirm modal already exist and keep their behavior. |
@@ -120,7 +121,7 @@ only module that talks to the backend.
 Honesty rules for the UI are unchanged: empty, loading, error and disabled
 states are real; nothing is displayed as working before it is.
 
-## 6. Rules for implementers (Phase 2 checklist)
+## 6. Rules for implementers (Phase 3 checklist)
 
 1. Implement `CorrectionEngine`; register it in `get_engine()` — that is the
    only construction point. Keep `UnavailableEngine` as the fallback.
