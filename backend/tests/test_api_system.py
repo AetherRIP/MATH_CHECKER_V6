@@ -17,8 +17,8 @@ def test_status_shape_and_honest_feature_flags(client):
     data = response.json()
 
     assert data["app_name"] == "Math Checker V6"
-    assert data["version"] == "6.1.0"
-    assert data["phase"] == 2
+    assert data["version"] == "6.2.0"
+    assert data["phase"] == 3
 
     assert data["database"] == {
         "status": "ready",
@@ -33,13 +33,21 @@ def test_status_shape_and_honest_feature_flags(client):
     assert features["storage_overview"] is True
     assert features["database"] is True
     assert features["settings"] is True
-    # Deliberately still false in Phase 2.
+    # PDF extraction is implemented; correction needs a configured provider.
+    assert features["pdf_processing"] is True
     assert features["ai_correction"] is False
-    assert features["pdf_processing"] is False
     assert features["grade_submission"] is False
+    # Report files and the Phase 4 job lifecycle are not implemented.
     assert features["reports"] is False
     assert features["classroom_sync"] is False
     assert features["background_tasks"] is False
+
+    engine = data["correction_engine"]
+    assert engine == {
+        "name": "unavailable",
+        "available": False,
+        "reason": "No AI provider is configured. Set MC6_AI_API_KEY to enable correction.",
+    }
 
 
 def test_status_reflects_real_configuration(client, monkeypatch):
@@ -51,6 +59,12 @@ def test_status_reflects_real_configuration(client, monkeypatch):
     data = client.get("/api/system/status").json()
     assert data["ai_provider_configured"] is True
     assert data["classroom_configured"] is True
+    assert data["features"]["ai_correction"] is True
+    assert data["features"]["grade_submission"] is True
+    assert data["correction_engine"]["available"] is True
+    assert data["correction_engine"]["name"] == "gemini:gemini-2.5-flash"
+    assert data["correction_engine"]["reason"] is None
+    assert "fake-key-for-test" not in client.get("/api/system/status").text
 
 
 def test_status_never_leaks_secrets_paths_or_env_names(client, monkeypatch, tmp_path):

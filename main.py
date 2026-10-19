@@ -23,7 +23,7 @@ sys.path.insert(0, str(BACKEND))
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python main.py",
-        description="Math Checker V6 — AI-assisted mathematics homework correction (Phase 2 backend foundation).",
+        description="Math Checker V6 — AI-assisted mathematics homework correction (Phase 3 correction engine).",
     )
     parser.add_argument("--host", help="interface to bind (default: MC6_HOST or 127.0.0.1)")
     parser.add_argument("--port", type=int, help="port to listen on (default: MC6_PORT or 8643)")
@@ -79,7 +79,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{APP_NAME} v{APP_VERSION} (Phase {APP_PHASE})")
     if not ai_provider_configured():
-        print("Note: no AI provider is configured — the UI runs fully without one.")
+        print(
+            "Note: no AI provider is configured — correction is unavailable "
+            "until MC6_AI_API_KEY is set."
+        )
     if not classroom_configured():
         print("Note: Google Classroom integration arrives in a later phase.")
     print(f"Serving on http://{cfg.host}:{cfg.port}  (Ctrl+C to stop)")

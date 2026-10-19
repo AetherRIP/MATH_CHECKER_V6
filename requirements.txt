@@ -1,7 +1,9 @@
-# RUNTIME dependencies of Math Checker V6 (Phase 2).
+# RUNTIME dependencies of Math Checker V6 (Phase 3).
 #
-# Exactly two direct dependencies: the ASGI framework and the server.
+# Three direct dependencies: the ASGI framework, the server, and the pure-Python
+# PDF reader used by the correction engine to validate and extract documents.
 # Everything else in the standard library. Test-only packages live in
 # requirements-dev.txt and are never required to run the application.
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
+pypdf>=5,<7

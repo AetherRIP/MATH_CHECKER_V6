@@ -3,9 +3,9 @@
  * Implemented now: selecting and validating submission files in the browser,
  * reviewing and removing them, and keeping an assignment/options draft. The
  * upload limit and default feedback detail are read from the server settings.
- * Arrives in a later phase (Phase 3): uploading for processing, AI correction,
- * PDF parsing, grade submission and report generation. The Start button is
- * disabled with an explanation — never a dead control.
+ * The correction engine and PDF extraction exist in the backend from Phase 3;
+ * uploading, job tracking and results display are connected in Phase 4. The
+ * Start button stays disabled with an explanation — never a dead control.
  */
 
 import { html, render as toHTML } from "../ui/html.js";
@@ -200,7 +200,7 @@ function optionsPanel() {
   return html`
     ${card({
       title: "Correction options",
-      description: "These options are stored with the job draft; processing arrives in a later phase.",
+      description: "These options are stored with the job draft until uploads are connected in Phase 4.",
       body: html`
         ${checkboxField({
           id: "opt-double-check",
@@ -248,7 +248,7 @@ function jobsPanel() {
           iconName: "clock",
           title: "No correction jobs yet",
           description:
-            "The job queue and correction engine arrive in a later phase. Files and options you prepare now are kept as a draft for that workflow.",
+            "The correction engine exists in the backend, but this page does not upload files or track jobs yet. That integration arrives in Phase 4.",
           compact: true,
         })}
         <div class="mt-5">
@@ -257,7 +257,7 @@ function jobsPanel() {
             variant: "primary",
             iconName: "correction",
             disabled: true,
-            note: "Available in a later phase — the AI correction engine is not implemented yet.",
+            note: "Available in Phase 4 — uploading and job tracking are not connected yet.",
           })}
         </div>
       `,
@@ -273,7 +273,7 @@ function resultsPanel() {
       body: emptyState({
         iconName: "check-circle",
         title: "No results yet",
-        description: "Results appear after correction jobs can run in a later phase.",
+        description: "Results appear after uploads and job tracking are connected in Phase 4.",
         compact: true,
       }),
     })}
@@ -285,8 +285,8 @@ export function render() {
     ${pageHeader({
       title: "AI Correction",
       description:
-        "Prepare homework submissions for AI-assisted correction. File selection and configuration work today; processing arrives in a later phase.",
-      actions: badge({ label: "Processing arrives in a later phase", tone: "warning", iconName: "info" }),
+        "Prepare homework submissions for AI-assisted correction. File selection and configuration work today; uploading is connected in Phase 4.",
+      actions: badge({ label: "Uploading arrives in Phase 4", tone: "warning", iconName: "info" }),
     })}
     ${tabsTemplate({
       id: "correction",
@@ -373,7 +373,7 @@ async function loadServerSettings(root) {
     }
     maxFileBytes = mb * 1024 * 1024;
     if (help) {
-      help.textContent = `PDF, PNG or JPG files, up to ${mb} MB each. Files stay in your browser for now — uploading and processing arrive in a later phase.`;
+      help.textContent = `PDF, PNG or JPG files, up to ${mb} MB each. Files stay in your browser until uploading is connected in Phase 4.`;
     }
     if (input) input.disabled = false;
     if (retry) retry.hidden = true;

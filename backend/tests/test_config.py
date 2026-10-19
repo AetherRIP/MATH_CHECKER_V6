@@ -88,6 +88,55 @@ def test_env_file_missing_is_silent(client, tmp_path):
     load_env_file(tmp_path / "does-not-exist.env")  # must not raise
 
 
+def test_ai_config_is_none_without_a_key(client):
+    from app.config import get_ai_config
+
+    assert get_ai_config() is None
+
+
+def test_ai_config_defaults(client, monkeypatch):
+    from app.config import get_ai_config
+
+    monkeypatch.setenv("MC6_AI_API_KEY", "key-value")
+    config = get_ai_config()
+    assert config is not None
+    assert config.model == "gemini-2.5-flash"
+    assert config.base_url == "https://generativelanguage.googleapis.com"
+    assert config.timeout_seconds == 180
+    assert config.max_retries == 2
+
+    monkeypatch.setenv("MC6_AI_MODEL", "gemini-test")
+    monkeypatch.setenv("MC6_AI_BASE_URL", "http://127.0.0.1:9000/")
+    monkeypatch.setenv("MC6_AI_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("MC6_AI_MAX_RETRIES", "0")
+    config = get_ai_config()
+    assert config.model == "gemini-test"
+    assert config.base_url == "http://127.0.0.1:9000"
+    assert config.timeout_seconds == 30
+    assert config.max_retries == 0
+
+
+def test_ai_config_rejects_invalid_values_without_echoing_the_key(client, monkeypatch):
+    from app.config import ConfigError, get_ai_config
+
+    monkeypatch.setenv("MC6_AI_API_KEY", "super-secret-value")
+    monkeypatch.setenv("MC6_AI_TIMEOUT_SECONDS", "never")
+    with pytest.raises(ConfigError) as excinfo:
+        get_ai_config()
+    assert "MC6_AI_TIMEOUT_SECONDS" in str(excinfo.value)
+    assert "super-secret-value" not in str(excinfo.value)
+
+    monkeypatch.delenv("MC6_AI_TIMEOUT_SECONDS")
+    monkeypatch.setenv("MC6_AI_BASE_URL", "ftp://example.invalid")
+    with pytest.raises(ConfigError, match="http"):
+        get_ai_config()
+
+    monkeypatch.delenv("MC6_AI_BASE_URL")
+    monkeypatch.setenv("MC6_AI_MAX_RETRIES", "99")
+    with pytest.raises(ConfigError, match="MAX_RETRIES"):
+        get_ai_config()
+
+
 def test_ai_and_classroom_flags_read_real_environment(client, monkeypatch):
     from app.config import ai_provider_configured, classroom_configured
 

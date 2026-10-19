@@ -110,15 +110,15 @@ function settingsForm() {
       ${card({
         title: "AI provider",
         description: "Correction engine configuration.",
-        actions: badge({ label: "Planned · Phase 3", tone: "warning" }),
+        actions: badge({ label: "Server-side configuration", tone: "info" }),
         body: html`
           ${selectField({
             id: "ai-provider",
             label: "Provider",
             value: "",
-            options: [{ value: "", label: "Not available yet" }],
+            options: [{ value: "", label: "Configured on the server" }],
             disabled: true,
-            note: "AI providers will be configured on the server through environment variables in a later phase. API keys are never stored in the browser or shown in this interface.",
+            note: "The AI provider is configured on the server with MC6_AI_API_KEY (and optional MC6_AI_MODEL / MC6_AI_BASE_URL). Keys are never stored in the browser or shown in this interface.",
           })}
         `,
       })}
@@ -151,7 +151,7 @@ function settingsForm() {
             },
             {
               label: "Temporary files",
-              value: "Processing workspaces will live in the application's temporary directory",
+              value: "The application's temporary directory",
             },
           ])}
           <div class="mt-4">

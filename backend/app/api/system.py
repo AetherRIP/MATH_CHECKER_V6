@@ -18,6 +18,7 @@ from ..config import (
     classroom_configured,
 )
 from ..db import DATABASE_UNAVAILABLE_DETAIL
+from ..engine import get_engine
 from ..models import DatabaseStatus
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -41,12 +42,19 @@ def system_status(request: Request) -> dict:
     else:
         database = storage.database_status()
 
+    engine_info = get_engine().describe()
+
     return {
         "app_name": APP_NAME,
         "version": APP_VERSION,
         "phase": APP_PHASE,
         "ai_provider_configured": ai_provider_configured(),
         "classroom_configured": classroom_configured(),
+        "correction_engine": {
+            "name": engine_info.name,
+            "available": engine_info.available,
+            "reason": engine_info.reason,
+        },
         "database": {
             "status": "ready" if database.ready else "unavailable",
             "schema_version": database.schema_version,
@@ -58,9 +66,11 @@ def system_status(request: Request) -> dict:
             "storage_overview": True,
             "database": True,
             "settings": True,
-            "ai_correction": False,
-            "pdf_processing": False,
-            "grade_submission": False,
+            # The engine capability is reported from the live engine, not from
+            # a hard-coded promise: no provider key means no correction.
+            "ai_correction": engine_info.available,
+            "pdf_processing": True,
+            "grade_submission": engine_info.available,
             "reports": False,
             "classroom_sync": False,
             "background_tasks": False,

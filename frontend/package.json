@@ -1,7 +1,7 @@
 {
   "name": "math-checker-v6-frontend",
   "private": true,
-  "version": "6.1.0",
+  "version": "6.2.0",
   "type": "module",
   "description": "Zero-build vanilla frontend. This manifest only declares ES module semantics so the Node built-in test runner can import the modules; the application itself needs no Node toolchain and has no dependencies.",
   "scripts": {

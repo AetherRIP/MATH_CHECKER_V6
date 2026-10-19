@@ -1,8 +1,9 @@
 """FastAPI application for Math Checker V6.
 
-Phase 2 adds a local SQLite database behind a storage boundary. The process
-stays idle until a request arrives: no background workers, no AI clients and
-no startup network calls. If the database cannot initialize, the application
+Phase 2 added a local SQLite database behind a storage boundary; Phase 3 adds
+the correction engine behind `app.engine`. The process stays idle until a
+request arrives: no background workers, no provider call at startup and no
+startup network calls. If the database cannot initialize, the application
 starts degraded — the UI and liveness probe still work, and data routes
 return a safe 503 error envelope.
 """

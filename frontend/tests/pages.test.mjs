@@ -80,6 +80,22 @@ test("dashboard readiness reflects the real database status", () => {
   assert.match(render(unavailable.find((row) => row.label === "Database").value), /Unavailable/);
 });
 
+test("dashboard correction readiness follows the live engine flag", () => {
+  const ready = dashboard.readinessRows({
+    database: { status: "ready", schema_version: 1 },
+    features: { ai_correction: true },
+    correction_engine: { name: "gemini:test", available: true },
+  });
+  assert.match(render(ready.find((row) => row.label === "Correction processing").value), /Ready/);
+
+  const unavailable = dashboard.readinessRows({
+    database: { status: "ready", schema_version: 1 },
+    features: { ai_correction: false },
+    correction_engine: { name: "unavailable", available: false, reason: "No AI provider is configured." },
+  });
+  assert.match(render(unavailable.find((row) => row.label === "Correction processing").value), /Unavailable/);
+});
+
 test("dashboard submission statistics render an empty or populated state", () => {
   const empty = render(
     dashboard.statsHTML({ total: 0, missing: 0, draft: 0, submitted: 0, graded: 0, failed: 0 }),
@@ -98,7 +114,7 @@ test("correction page implements tabs, file input and a disabled start action", 
   assert.ok(markup.includes('role="tablist"'));
   assert.ok(markup.includes('type="file"'));
   assert.ok(markup.includes(`accept="${correction.ACCEPTED_TYPES.join(",")}"`));
-  assert.ok(markup.includes("Processing arrives in a later phase"));
+  assert.ok(markup.includes("Uploading arrives in Phase 4"));
   assert.ok(markup.includes('data-fill="max-upload-help"'));
   assert.ok(markup.includes("Reading the current upload limit"));
   assert.ok(markup.includes("data-modal-confirm"));

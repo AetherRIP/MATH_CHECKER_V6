@@ -18,6 +18,9 @@ const INTEGRATION_SOURCES = 2;
 export function readinessRows(status) {
   const database = status.database || {};
   const databaseReady = database.status === "ready";
+  const features = status.features || {};
+  const engine = status.correction_engine || {};
+  const correctionReady = Boolean(features.ai_correction);
   return [
     {
       label: "Application interface",
@@ -41,7 +44,7 @@ export function readinessRows(status) {
       label: "AI provider",
       value: status.ai_provider_configured
         ? badge({ label: "Configured", tone: "success" })
-        : badge({ label: "Not configured (optional)", tone: "neutral" }),
+        : badge({ label: "Not configured", tone: "neutral" }),
     },
     {
       label: "Google Classroom",
@@ -51,7 +54,12 @@ export function readinessRows(status) {
     },
     {
       label: "Correction processing",
-      value: badge({ label: "Planned · Phase 3", tone: "warning" }),
+      value: correctionReady
+        ? badge({ label: "Ready", tone: "success", iconName: "check-circle" })
+        : badge({
+            label: engine.reason ? "Unavailable" : "Not configured",
+            tone: "warning",
+          }),
     },
     {
       label: "Background tasks",

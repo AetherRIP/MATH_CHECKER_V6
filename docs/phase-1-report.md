@@ -7,6 +7,10 @@
 > statistics APIs, degraded-start handling, and live UI wiring). The AI
 > correction engine described here as “Phase 2” is now planned for **Phase 3**
 > and is specified in `docs/correction-engine-contract.md`.
+>
+> **Phase 3 update:** the correction engine is implemented in
+> `backend/app/correction/` and documented in `docs/phase-3-report.md`.
+> Phase 4 still owns the upload/job/result integration and the UI wiring.
 
 ---
 

@@ -1,6 +1,6 @@
 # Math Checker V6 — Architecture
 
-**Phase 2 · Backend Foundation**
+**Phase 3 · Correction Engine**
 
 This document records the architecture chosen for V6, why it was chosen over
 the alternatives, the dependency budget, and exactly where later phases plug
@@ -48,11 +48,15 @@ Browser ── static files ──▶ FastAPI (uvicorn)
                                 │
                                 ▼
                         SQLite  data/app.db
+
+Correction pipeline (Phase 3, no HTTP route yet):
+validate_request → document extraction → scheme blueprint →
+Gemini provider → JSON validation → deterministic checks → report
 ```
 
-- **Backend:** FastAPI + uvicorn. Two runtime dependencies. The database is
-  the standard-library `sqlite3`; no ORM, no migration package, no worker, no
-  external service, no startup network call.
+- **Backend:** FastAPI + uvicorn + pypdf. Three runtime dependencies. The
+  database is the standard-library `sqlite3`; no ORM, no migration package,
+  no worker, no external service, no startup network call.
 - **Storage:** SQLite in the configured data directory (`MC6_DATA_DIR`, or
   `./data`). WAL mode, foreign keys and a busy timeout are set on every
   connection; each operation opens and closes its own connection.
@@ -92,7 +96,16 @@ backend/
 │   ├── storage.py           # the only SQL: records, settings, statistics
 │   ├── services.py          # SettingsService, StatsService
 │   ├── dev_fixtures.py      # deterministic, idempotent development seed
-│   ├── engine.py            # Phase 3 engine contract + honest stub
+│   ├── engine.py            # engine contract, data types, get_engine()
+│   ├── correction/          # Phase 3 engine implementation
+│   │   ├── documents.py     # byte validation + PDF/image extraction (pypdf)
+│   │   ├── scheme.py        # mark-scheme blueprint extraction
+│   │   ├── prompts.py       # marking rules and required JSON shape
+│   │   ├── provider.py      # Gemini REST client, bounded retries
+│   │   ├── parsing.py       # strict JSON parsing
+│   │   ├── validation.py    # marks, maxima, totals, completeness
+│   │   ├── verify.py        # numeric/algebraic checks (never edits marks)
+│   │   └── service.py       # orchestration + provider construction
 │   ├── main.py              # FastAPI app: lifespan, routers, middleware, static
 │   └── api/
 │       ├── deps.py          # storage/settings/stats dependency providers
@@ -186,8 +199,9 @@ Rules that keep this maintainable:
 
 | | Count | Notes |
 |---|---|---|
-| Runtime (direct) | **2** | `fastapi`, `uvicorn` |
+| Runtime (direct) | **3** | `fastapi`, `uvicorn`, `pypdf` (plain-Python PDF text extraction) |
 | Database | **0** | standard-library `sqlite3` |
+| AI transport | **0** | standard-library `urllib`; no provider SDK |
 | Dev | 2 | `pytest`, `httpx` |
 | Frontend runtime | **0** | no npm packages at all |
 
@@ -196,22 +210,23 @@ Frontend payload and startup measurements are recorded in
 
 ## 6. Integration boundary for later phases (important)
 
-The correction engine must **not** be copied into page components. The seams
-are already in place: `backend/app/engine.py` (data types, the
-`CorrectionEngine` protocol, the input policy, and the honest
-`UnavailableEngine` stub) and `docs/correction-engine-contract.md` (HTTP
-surface, job lifecycle, error semantics, frontend wiring). **Phase 3**
-implements the protocol and registers it in `get_engine()`.
+Correction logic must **not** be copied into page components. The seam is
+`backend/app/engine.py` (data types, the `CorrectionEngine` protocol, the
+input policy, `get_engine()`), backed by `backend/app/correction/`.
+`docs/correction-engine-contract.md` is the executable + behavioral contract.
+
+Phase 3 implements the engine and a process-local registry. It deliberately
+adds **no** HTTP routes, no database tables and no frontend upload flow.
+Phase 4 owns those.
 
 | Future feature | Backend seam | Frontend seam |
 |---|---|---|
-| AI correction (Phase 3) | implement `CorrectionEngine` per `docs/correction-engine-contract.md`; new `backend/app/api/corrections.py` router maps its errors; persist jobs through the storage boundary | `api.js` gains `corrections.*` calls; `pages/correction.js` fills its existing jobs/results tabs |
-| PDF processing | engine module invoked from the correction service | existing file-selection flow uploads its draft |
+| Correction jobs (Phase 4) | new `backend/app/api/corrections.py` router calling `get_engine()`; migration `002` for jobs/items through the storage boundary | `api.js` gains `corrections.*`; `pages/correction.js` fills its jobs/results tabs |
 | Google Classroom | `backend/app/api/classroom.py` + provider module; OAuth material server-side only | Settings' Classroom placeholder section + a future page routed via `router.js` |
-| Reports / grading | `backend/app/api/reports.py`; report files under the data directory | new page module; Storage page already has a "Reports" category |
-| Background tasks | job persistence + a bounded scheduler only if needed; status endpoints, no polling loops | `pages/tasks.js` already shows the four task categories |
+| Reports | `backend/app/api/reports.py`; generated files under the data directory | new page module; Storage page already has a "Reports" category |
+| Background tasks | Phase 4 job persistence + a bounded scheduler only if needed; status endpoints, no polling loops | `pages/tasks.js` already shows the four task categories |
 
-Contract rules for Phase 3+ work:
+Contract rules for Phase 4+ work:
 
 - New features add API routers under `backend/app/api/` — `main.py` only
   registers them.
@@ -223,9 +238,33 @@ Contract rules for Phase 3+ work:
   automated tests at both layers, and an update to the feature flags in
   `api/system.py` (which drive the Dashboard readiness panel).
 
-## 7. What was deliberately left out
+## 7. What was deliberately left out of Phase 3
 
-AI correction, Gemini/provider integration and key rotation, PDF extraction,
-mark-scheme verification, grading, Classroom sync, report generation,
-background workers, authentication, class/roster grouping, deployment
-automation. The UI labels each as planned instead of simulating it.
+Durable job persistence and the `queued`/`processing` lifecycle, upload/report
+HTTP routes, frontend uploading and result display, report file generation,
+Classroom sync, provider-key rotation/management, authentication,
+class/roster grouping, grade boundaries and deployment automation. The UI
+labels each as planned instead of simulating it.
+
+## 8. Correction-engine architecture (Phase 3)
+
+- **One seam.** `get_engine()` dispatches on `MC6_AI_API_KEY`; callers depend
+  only on `CorrectionEngine`.
+- **Documents first.** Every byte is validated before the provider is called;
+  PDFs are read with pypdf and page text is preserved. Corrupt, encrypted or
+  mislabelled files fail the job instead of being skipped.
+- **Mark scheme is mandatory.** A conservative blueprint (labels + maxima)
+  is extracted from the scheme text and used for coverage and maximum
+  reconciliation. Extraction never blocks marking; unverified coverage is
+  reported.
+- **Question-level truth.** The model returns one `MarkedItem` per label.
+  Missing questions become `unresolved`, never zero. Unknown maxima keep the
+  total unknown and suppress the percentage.
+- **Deterministic checks never edit marks.** Numeric/algebraic checks add
+  evidence and review flags; totals and percentages are always recomputed by
+  Python.
+- **Provider isolation.** The Gemini REST client uses stdlib `urllib`,
+  bounded retries, a 12 MB raw inline budget and safe error messages. No secret,
+  path or student content is logged.
+- **Blocking work runs off the event loop** via `asyncio.to_thread`, with at
+  most two concurrent provider calls per process.

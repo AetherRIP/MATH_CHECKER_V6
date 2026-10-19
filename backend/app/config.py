@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "Math Checker V6"
-APP_VERSION = "6.1.0"
-APP_PHASE = 2
+APP_VERSION = "6.2.0"
+APP_PHASE = 3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -126,8 +126,63 @@ def ensure_dirs() -> Config:
 
 
 def ai_provider_configured() -> bool:
-    """True when an AI provider key is present (Phase 3+ feature)."""
+    """True when an AI provider key is present (Phase 3 feature)."""
     return bool(os.environ.get("MC6_AI_API_KEY", "").strip())
+
+
+@dataclass(frozen=True)
+class AIConfig:
+    """Server-side AI provider configuration. The key never leaves the process."""
+
+    api_key: str
+    model: str
+    base_url: str
+    timeout_seconds: int
+    max_retries: int
+
+
+def get_ai_config() -> AIConfig | None:
+    """Return the provider configuration, or ``None`` when no key is set.
+
+    Invalid optional values raise :class:`ConfigError` with a message that
+    names the variable but never its value (a key must never reach a log or
+    an error response).
+    """
+    api_key = os.environ.get("MC6_AI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    model = os.environ.get("MC6_AI_MODEL", "").strip() or "gemini-2.5-flash"
+    base_url = (
+        os.environ.get("MC6_AI_BASE_URL", "").strip()
+        or "https://generativelanguage.googleapis.com"
+    ).rstrip("/")
+    if not base_url.startswith(("https://", "http://")):
+        raise ConfigError("MC6_AI_BASE_URL must be an http(s) URL.")
+
+    timeout_raw = os.environ.get("MC6_AI_TIMEOUT_SECONDS", "").strip() or "180"
+    try:
+        timeout_seconds = int(timeout_raw)
+    except ValueError as exc:
+        raise ConfigError("MC6_AI_TIMEOUT_SECONDS must be an integer.") from exc
+    if not 5 <= timeout_seconds <= 600:
+        raise ConfigError("MC6_AI_TIMEOUT_SECONDS must be between 5 and 600.")
+
+    retries_raw = os.environ.get("MC6_AI_MAX_RETRIES", "").strip() or "2"
+    try:
+        max_retries = int(retries_raw)
+    except ValueError as exc:
+        raise ConfigError("MC6_AI_MAX_RETRIES must be an integer.") from exc
+    if not 0 <= max_retries <= 5:
+        raise ConfigError("MC6_AI_MAX_RETRIES must be between 0 and 5.")
+
+    return AIConfig(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
+    )
 
 
 def classroom_configured() -> bool:
