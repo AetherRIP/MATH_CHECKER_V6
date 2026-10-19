@@ -135,6 +135,13 @@ function submissionsPanel() {
             </p>
           </div>
         </div>
+        <div class="mt-3" data-upload-limit-retry hidden>
+          ${button({
+            label: "Retry upload limit",
+            iconName: "refresh",
+            attrs: 'data-action="retry-upload-limit"',
+          })}
+        </div>
         <div data-file-errors>${errorsHTML()}</div>
       `,
     })}
@@ -352,6 +359,11 @@ function addFiles(root, fileList) {
 async function loadServerSettings(root) {
   const help = root.querySelector('[data-fill="max-upload-help"]');
   const input = root.querySelector("[data-file-input]");
+  const retry = root.querySelector("[data-upload-limit-retry]");
+  if (retry) retry.hidden = true;
+  if (help) {
+    help.textContent = "PDF, PNG or JPG files. Reading the current upload limit from the server…";
+  }
   try {
     const payload = await api.settings.get();
     const settings = payload.settings || {};
@@ -364,6 +376,7 @@ async function loadServerSettings(root) {
       help.textContent = `PDF, PNG or JPG files, up to ${mb} MB each. Files stay in your browser for now — uploading and processing arrive in a later phase.`;
     }
     if (input) input.disabled = false;
+    if (retry) retry.hidden = true;
     if (!optionsTouched && settings.default_feedback_detail) {
       draft.options.feedbackDetail = settings.default_feedback_detail;
       const select = root.querySelector("#opt-feedback-detail");
@@ -371,9 +384,11 @@ async function loadServerSettings(root) {
     }
   } catch {
     maxFileBytes = null;
+    if (input) input.disabled = true;
+    if (retry) retry.hidden = false;
     if (help) {
       help.textContent =
-        "The current upload limit could not be read from the server. Reload the page to try again.";
+        "The current upload limit could not be read from the server. Try again.";
     }
   }
 }
@@ -412,6 +427,11 @@ export function mount(root, { signal } = {}) {
   root.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+
+    if (target.closest('[data-action="retry-upload-limit"]')) {
+      loadServerSettings(root);
+      return;
+    }
 
     const removeBtn = target.closest("[data-remove-file]");
     if (removeBtn) {

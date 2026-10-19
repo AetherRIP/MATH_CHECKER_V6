@@ -102,6 +102,8 @@ test("correction page implements tabs, file input and a disabled start action", 
   assert.ok(markup.includes('data-fill="max-upload-help"'));
   assert.ok(markup.includes("Reading the current upload limit"));
   assert.ok(markup.includes("data-modal-confirm"));
+  assert.ok(markup.includes("data-upload-limit-retry"));
+  assert.ok(markup.includes('data-action="retry-upload-limit"'));
   assert.ok(!markup.includes("25 MB"));
   assert.equal(correction.resolveUploadLimitMB({ max_upload_mb: 10 }), 10);
   assert.equal(correction.resolveUploadLimitMB({ max_upload_mb: 0 }), null);
