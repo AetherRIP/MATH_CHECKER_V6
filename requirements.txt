@@ -1,0 +1,7 @@
+# RUNTIME dependencies of Math Checker V6 (Phase 1).
+#
+# Exactly two direct dependencies: the ASGI framework and the server.
+# Everything else in the standard library. Test-only packages live in
+# requirements-dev.txt and are never required to run the application.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1

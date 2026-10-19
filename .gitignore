@@ -1,0 +1,30 @@
+# Environment and secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Runtime data (created by the app at startup)
+data/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Node (only used to run frontend unit tests)
+node_modules/
+
+# Logs and OS noise
+*.log
+Thumbs.db
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Workspace tooling metadata
+.freebuff/

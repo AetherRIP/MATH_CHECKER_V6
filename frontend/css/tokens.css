@@ -1,0 +1,101 @@
+/* Math Checker V6 — design tokens.
+ *
+ * Every color, spacing, radius, type and shadow value used anywhere in the
+ * application is defined here first. Change a token and the whole interface
+ * follows; never hard-code a palette value in a component stylesheet.
+ */
+
+:root {
+  /* ---- Surfaces ---- */
+  --color-bg: #0B1120;
+  --color-sidebar: #0E1728;
+  --color-card: #121E30;
+  --color-elevated: #18263A;
+  --color-input: #0E1A2B;
+
+  /* ---- Accent ---- */
+  --color-accent: #2DD4BF;
+  --color-accent-hover: #5EEAD4;
+  --color-accent-soft: rgba(45, 212, 191, 0.12);
+  --color-accent-strong: rgba(45, 212, 191, 0.22);
+  --color-on-accent: #052A26;
+
+  /* ---- Text ---- */
+  --color-text: #F1F5F9;
+  --color-text-secondary: #94A3B8;
+  --color-text-muted: #64748B;
+
+  /* ---- Lines & overlays ---- */
+  --color-border: #26364A;
+  --color-border-strong: #33465E;
+  --color-overlay: rgba(2, 6, 16, 0.66);
+
+  /* ---- Status ---- */
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-error: #FB7185;
+  --color-info: #60A5FA;
+  --color-success-soft: rgba(52, 211, 153, 0.12);
+  --color-warning-soft: rgba(251, 191, 36, 0.12);
+  --color-error-soft: rgba(251, 113, 133, 0.12);
+  --color-info-soft: rgba(96, 165, 250, 0.12);
+
+  /* ---- Typography (system fonts only — nothing is fetched remotely) ---- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- Spacing scale ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---- Radii ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  /* ---- Shadows (restrained) ---- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.35);
+
+  /* ---- Motion (CSS transitions only) ---- */
+  --transition-fast: 120ms ease;
+  --transition-base: 180ms ease;
+
+  /* ---- Layout ---- */
+  --sidebar-width: 248px;
+  --sidebar-width-collapsed: 64px;
+  --topbar-height: 58px;
+  --content-max: 1360px;
+
+  /* ---- Focus ring ---- */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* Compact density shrinks card and row padding for high-density work. */
+:root[data-density="compact"] {
+  --space-card-padding: var(--space-4);
+  --space-row-y: var(--space-2);
+}
+:root[data-density="comfortable"] {
+  --space-card-padding: var(--space-5);
+  --space-row-y: var(--space-3);
+}
