@@ -41,8 +41,6 @@ async def lifespan(app: FastAPI):
     """Create the data directories, logging and database; never crash on failure."""
     configure_logging("INFO")
     app.state.storage = None
-    app.state.database = None
-    app.state.database_error = None
 
     try:
         config = ensure_dirs()
@@ -54,10 +52,8 @@ async def lifespan(app: FastAPI):
         # Startup failure is reported, not fatal: the UI and /api/health stay
         # available, and data routes answer with a safe 503 envelope.
         log.exception("database initialization failed")
-        app.state.database_error = "The local database could not be initialized."
     else:
         app.state.storage = storage_layer
-        app.state.database = database
         log.info("%s %s ready (database schema initialized)", APP_NAME, APP_VERSION)
 
     yield

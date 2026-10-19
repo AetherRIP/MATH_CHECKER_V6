@@ -267,7 +267,7 @@ async function loadReadiness(root) {
   }
 }
 
-export function mount(root) {
+export function mount(root, { signal } = {}) {
   loadStats(root);
   loadReadiness(root);
   root.addEventListener("click", (event) => {
@@ -279,5 +279,5 @@ export function mount(root) {
     if (target.closest('[data-action="retry-status"]')) {
       loadReadiness(root);
     }
-  });
+  }, { signal });
 }

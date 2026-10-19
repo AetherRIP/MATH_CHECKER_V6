@@ -14,7 +14,10 @@ def test_get_settings_returns_defaults(client):
         "settings": {
             "max_upload_mb": 25,
             "default_feedback_detail": "detailed",
-        }
+        },
+        "limits": {
+            "max_upload_mb": {"minimum": 1, "maximum": 25},
+        },
     }
 
 
@@ -28,7 +31,10 @@ def test_patch_settings_updates_and_persists(client):
         "settings": {
             "max_upload_mb": 10,
             "default_feedback_detail": "brief",
-        }
+        },
+        "limits": {
+            "max_upload_mb": {"minimum": 1, "maximum": 25},
+        },
     }
     assert client.get("/api/settings").json()["settings"] == {
         "max_upload_mb": 10,

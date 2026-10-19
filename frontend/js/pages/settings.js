@@ -23,7 +23,8 @@ const START_PAGE_LABELS = {
   "/settings": "Settings",
 };
 
-export function serverSettingsForm(settings) {
+export function serverSettingsForm(settings, limits) {
+  const cap = limits.max_upload_mb;
   return html`
     <form class="stack" id="server-settings-form" novalidate>
       ${textInput({
@@ -32,8 +33,8 @@ export function serverSettingsForm(settings) {
         type: "number",
         value: settings.max_upload_mb,
         required: true,
-        attrs: 'min="1" max="25" step="1"',
-        help: "Applies to submission files. The 25 MB maximum is part of the correction engine contract.",
+        attrs: `min="${cap.minimum}" max="${cap.maximum}" step="1"`,
+        help: `Applies to submission files. The server accepts ${cap.minimum}–${cap.maximum} MB; submission files are currently capped at ${settings.max_upload_mb} MB.`,
       })}
       ${selectField({
         id: "server-feedback-detail",
@@ -143,7 +144,7 @@ function settingsForm() {
         body: html`
           ${detailRows([
             { label: "Accepted submission types", value: "PDF, PNG, JPG" },
-            { label: "Maximum file size", value: "25 MB per file" },
+            { label: "Maximum file size", value: html`<span data-fill="storage-max-upload">—</span>` },
             {
               label: "Local database",
               value: "SQLite, stored inside the application data directory",
@@ -188,15 +189,30 @@ function applyDensity(value) {
   document.documentElement.dataset.density = value;
 }
 
+let currentLimits = null;
+
+function applyServerSettings(root, payload) {
+  currentLimits = payload.limits;
+  const section = root.querySelector('[data-section="server-settings"]');
+  if (section) {
+    section.innerHTML = toHTML(serverSettingsForm(payload.settings, payload.limits));
+  }
+  const storageCap = root.querySelector('[data-fill="storage-max-upload"]');
+  if (storageCap) storageCap.textContent = `${payload.settings.max_upload_mb} MB per file`;
+}
+
 function loadServerSettings(root) {
   const section = root.querySelector('[data-section="server-settings"]');
   if (section) section.innerHTML = toHTML(loadingState({ label: "Reading server settings…" }));
 
-  api.settings.get().then(
-    (payload) => {
-      if (section) section.innerHTML = toHTML(serverSettingsForm(payload.settings));
-    },
-    (error) => {
+  api.settings.get()
+    .then((payload) => {
+      if (!payload.limits?.max_upload_mb) {
+        throw new Error("The server did not provide its settings limits.");
+      }
+      applyServerSettings(root, payload);
+    })
+    .catch((error) => {
       if (section) {
         section.innerHTML = toHTML(
           errorState({
@@ -210,8 +226,7 @@ function loadServerSettings(root) {
           }),
         );
       }
-    },
-  );
+    });
 }
 
 function loadDiagnostics(root) {
@@ -259,9 +274,16 @@ function saveServerSettings(root, form) {
   const errorSlot = form.querySelector("[data-server-settings-error]");
   const maxUpload = Number(form.querySelector("#server-max-upload")?.value);
   const feedbackDetail = form.querySelector("#server-feedback-detail")?.value || "detailed";
+  const cap = currentLimits?.max_upload_mb;
 
-  if (!Number.isInteger(maxUpload) || maxUpload < 1 || maxUpload > 25) {
-    if (errorSlot) errorSlot.textContent = "Maximum upload size must be a whole number between 1 and 25 MB.";
+  if (!cap) {
+    if (errorSlot) errorSlot.textContent = "The server settings limits are unavailable. Reload the page.";
+    return;
+  }
+  if (!Number.isInteger(maxUpload) || maxUpload < cap.minimum || maxUpload > cap.maximum) {
+    if (errorSlot) {
+      errorSlot.textContent = `Maximum upload size must be a whole number between ${cap.minimum} and ${cap.maximum} MB.`;
+    }
     return;
   }
   if (errorSlot) errorSlot.textContent = "";
@@ -271,8 +293,7 @@ function saveServerSettings(root, form) {
     default_feedback_detail: feedbackDetail,
   }).then(
     (payload) => {
-      const section = root.querySelector('[data-section="server-settings"]');
-      if (section) section.innerHTML = toHTML(serverSettingsForm(payload.settings));
+      applyServerSettings(root, payload);
       showToast("Server settings saved.", { tone: "success" });
     },
     (error) => {
@@ -293,7 +314,7 @@ export function render() {
   `;
 }
 
-export function mount(root) {
+export function mount(root, { signal } = {}) {
   loadServerSettings(root);
   loadDiagnostics(root);
 
@@ -314,7 +335,7 @@ export function mount(root) {
       applyDensity(density);
       showToast("Preferences saved.", { tone: "success" });
     }
-  });
+  }, { signal });
 
   root.addEventListener("click", (event) => {
     const target = event.target;
@@ -331,5 +352,5 @@ export function mount(root) {
       loadDiagnostics(root);
       showToast("Preferences reset to defaults.", { tone: "info" });
     }
-  });
+  }, { signal });
 }

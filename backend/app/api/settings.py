@@ -25,9 +25,13 @@ class SettingsUpdate(BaseModel):
     default_feedback_detail: str | None = None
 
 
+def _settings_payload(service: SettingsService) -> dict:
+    return {"settings": service.get(), "limits": service.limits()}
+
+
 @router.get("/settings")
 def read_settings(service: SettingsService = Depends(get_settings_service)) -> dict:
-    return {"settings": service.get()}
+    return _settings_payload(service)
 
 
 @router.patch("/settings")
@@ -36,4 +40,4 @@ def update_settings(
     service: SettingsService = Depends(get_settings_service),
 ) -> dict:
     changes = payload.model_dump(exclude_unset=True)
-    return {"settings": service.update(changes)}
+    return {"settings": service.update(changes), "limits": service.limits()}

@@ -115,12 +115,12 @@ export function render() {
   `;
 }
 
-export function mount(root) {
+export function mount(root, { signal } = {}) {
   load(root);
   root.addEventListener("click", (event) => {
     const target = event.target;
     if (target instanceof Element && target.closest('[data-action="retry"]')) {
       load(root);
     }
-  });
+  }, { signal });
 }

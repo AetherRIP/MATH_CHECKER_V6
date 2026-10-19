@@ -100,7 +100,12 @@ test("correction page implements tabs, file input and a disabled start action", 
   assert.ok(markup.includes(`accept="${correction.ACCEPTED_TYPES.join(",")}"`));
   assert.ok(markup.includes("Processing arrives in a later phase"));
   assert.ok(markup.includes('data-fill="max-upload-help"'));
-  assert.ok(markup.includes('data-modal-confirm'));
+  assert.ok(markup.includes("Reading the current upload limit"));
+  assert.ok(markup.includes("data-modal-confirm"));
+  assert.ok(!markup.includes("25 MB"));
+  assert.equal(correction.resolveUploadLimitMB({ max_upload_mb: 10 }), 10);
+  assert.equal(correction.resolveUploadLimitMB({ max_upload_mb: 0 }), null);
+  assert.equal(correction.resolveUploadLimitMB({}), null);
   const labelIndex = markup.indexOf("Start correction");
   const tagStart = markup.lastIndexOf("<button", labelIndex);
   const buttonTag = markup.slice(tagStart, markup.indexOf(">", tagStart) + 1);
@@ -120,11 +125,20 @@ test("settings page labels its fields and exposes real server settings", () => {
   assert.ok(!markup.includes("api_key"), "no key material field names");
 
   const form = render(
-    settings.serverSettingsForm({ max_upload_mb: 25, default_feedback_detail: "detailed" }),
+    settings.serverSettingsForm(
+      { max_upload_mb: 10, default_feedback_detail: "detailed" },
+      { max_upload_mb: { minimum: 1, maximum: 25 } },
+    ),
   );
   assert.ok(form.includes('id="server-max-upload"'));
   assert.ok(form.includes('id="server-feedback-detail"'));
+  assert.ok(form.includes('value="10"'));
+  assert.ok(form.includes('max="25"'));
+  assert.ok(form.includes("currently capped at 10 MB"));
   assert.ok(form.includes("Save server settings"));
+
+  assert.ok(markup.includes('data-fill="storage-max-upload"'));
+  assert.ok(!markup.includes("25 MB per file"));
 });
 
 test("storage and task pages explain their empty state honestly", () => {

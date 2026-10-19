@@ -39,7 +39,51 @@ export function resolveRoute(path, table = routes) {
   };
 }
 
+/**
+ * Page lifecycle contract:
+ * - mount(root, { signal }) registers every DOM listener with `signal`.
+ * - unmount?(root) is optional extra cleanup; the host aborts the signal and
+ *   calls any cleanup returned by mount on every navigation.
+ */
+export function createPageHost(container) {
+  let active = null;
+
+  return {
+    mount(page, options = {}) {
+      active?.unmount();
+      active = null;
+
+      const controller = new AbortController();
+      let cleanup;
+      try {
+        cleanup = page.mount?.(container, { ...options, signal: controller.signal });
+      } catch (err) {
+        controller.abort();
+        throw err;
+      }
+
+      active = {
+        unmount() {
+          try {
+            page.unmount?.(container, options);
+          } finally {
+            controller.abort();
+            if (typeof cleanup === "function") cleanup();
+          }
+        },
+      };
+    },
+    unmount() {
+      active?.unmount();
+      active = null;
+    },
+  };
+}
+
 export function startRouter({ container, getStartPath, onNavigate }) {
+  const pageHost = createPageHost(container);
+  let navigationId = 0;
+
   async function renderRoute() {
     const path = parseHash(window.location.hash);
     if (path === "/") {
@@ -47,12 +91,15 @@ export function startRouter({ container, getStartPath, onNavigate }) {
       return;
     }
 
+    const currentNavigation = ++navigationId;
+    pageHost.unmount();
     const route = resolveRoute(path);
     if (onNavigate) onNavigate(route);
     container.setAttribute("aria-busy", "true");
 
     try {
       const page = await route.load();
+      if (currentNavigation !== navigationId) return;
       container.innerHTML = page.render ? toHTML(page.render({ path, route })) : "";
       document.title = `${route.title} · Math Checker V6`;
       window.scrollTo(0, 0);
@@ -61,13 +108,14 @@ export function startRouter({ container, getStartPath, onNavigate }) {
         heading.setAttribute("tabindex", "-1");
         heading.focus({ preventScroll: true });
       }
-      if (page.mount) page.mount(container);
+      pageHost.mount(page, { path, route });
     } catch (err) {
+      if (currentNavigation !== navigationId) return;
       console.error("Page render failed:", err);
       container.innerHTML =
         '<div class="state-panel" data-tone="error"><p class="state-panel__title">This page could not be displayed</p><p class="state-panel__desc">An unexpected interface error occurred. Try reloading the page.</p></div>';
     } finally {
-      container.removeAttribute("aria-busy");
+      if (currentNavigation === navigationId) container.removeAttribute("aria-busy");
     }
   }
 

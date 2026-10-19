@@ -114,7 +114,7 @@ the schema version and a safe detail message.
 |---|---|
 | `GET /api/health` | liveness only: `{"status": "ok"}` |
 | `GET /api/system/status` | version, phase, database readiness and honest feature flags |
-| `GET /api/settings` | `{"settings": {"max_upload_mb": 25, "default_feedback_detail": "detailed"}}` |
+| `GET /api/settings` | `{"settings": {"max_upload_mb": 25, "default_feedback_detail": "detailed"}, "limits": {"max_upload_mb": {"minimum": 1, "maximum": 25}}}` |
 | `PATCH /api/settings` | partial update; 422 for empty/unknown/out-of-range/wrong-type values; 503 when the database is unavailable |
 | `GET /api/database/stats` | database status plus student, assignment, submission-by-state and correction counts |
 | `GET /api/storage/summary` | unchanged real filesystem measurement (now includes `app.db`) |
@@ -139,8 +139,8 @@ and the deployment free of paid services or credentials.
 
 | Command | Result |
 |---|---|
-| `PYTHONPATH=backend .venv/Scripts/python -m pytest backend/tests -q` | **70 passed**, exit 0 (1 pre-existing Starlette/httpx deprecation warning) |
-| `cd frontend && npm test` | **41 passed, 0 failed**, exit 0 |
+| `PYTHONPATH=backend .venv/Scripts/python -m pytest backend/tests -q` | **72 passed**, exit 0 (1 pre-existing Starlette/httpx deprecation warning) |
+| `cd frontend && npm test` | **42 passed, 0 failed**, exit 0 |
 
 Backend coverage includes fresh initialization and idempotence, schema-version
 safety, CRUD, zero marks, missing/draft/submitted/graded separation, exact

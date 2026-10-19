@@ -22,6 +22,7 @@ from .models import DatabaseStatus
 log = logging.getLogger("mathchecker.db")
 
 CURRENT_SCHEMA_VERSION = 1
+DATABASE_UNAVAILABLE_DETAIL = "The local database is not available."
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 REQUIRED_TABLES = frozenset(
     {"settings", "students", "assignments", "submissions", "correction_results"}
@@ -38,6 +39,9 @@ class SchemaTooNewError(DatabaseError):
 
 class DatabaseUnavailableError(DatabaseError):
     """The database cannot serve the requested operation."""
+
+    def __init__(self, message: str = DATABASE_UNAVAILABLE_DETAIL):
+        super().__init__(message)
 
 
 class Database:
@@ -141,7 +145,7 @@ class Database:
                 return DatabaseStatus(ready=True, schema_version=version)
         except (OSError, sqlite3.Error):
             log.exception("database status check failed")
-            return DatabaseStatus(ready=False, detail="Database is unavailable.")
+            return DatabaseStatus(ready=False, detail=DATABASE_UNAVAILABLE_DETAIL)
 
 
 def migration_files() -> list[tuple[int, Path]]:

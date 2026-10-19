@@ -24,11 +24,17 @@ import { formatBytes } from "../format.js";
 import { api } from "../api.js";
 
 export const ACCEPTED_TYPES = [".pdf", ".png", ".jpg", ".jpeg"];
-export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const PAGE_SIZE = 8;
 
-// Server settings may lower the accepted size; the engine contract caps it at 25 MB.
-let maxFileBytes = MAX_FILE_BYTES;
+/** The server's effective upload cap in MB, or null when it is not usable. */
+export function resolveUploadLimitMB(settings) {
+  const mb = Number(settings?.max_upload_mb);
+  return Number.isFinite(mb) && mb >= 1 ? mb : null;
+}
+
+// Null until the server reports its effective upload cap. File selection is
+// disabled until then so the browser never validates against a guessed limit.
+let maxFileBytes = null;
 let optionsTouched = false;
 
 const draft = {
@@ -122,10 +128,10 @@ function submissionsPanel() {
               accept="${ACCEPTED_TYPES.join(",")}"
               aria-describedby="submission-files-help"
               data-file-input
+              disabled
             >
             <p class="field__help" id="submission-files-help" data-fill="max-upload-help">
-              PDF, PNG or JPG files, up to 25 MB each. Files stay in your browser for now —
-              uploading and processing arrive in a later phase.
+              PDF, PNG or JPG files. Reading the current upload limit from the server…
             </p>
           </div>
         </div>
@@ -314,6 +320,10 @@ function removeFile(root, id) {
 
 function addFiles(root, fileList) {
   draft.fileErrors = [];
+  if (maxFileBytes === null) {
+    showToast("The upload limit is still loading. Try again in a moment.", { tone: "error" });
+    return;
+  }
   let added = 0;
   for (const file of Array.from(fileList)) {
     const typeError = validateFileType(file.name, ACCEPTED_TYPES);
@@ -340,29 +350,36 @@ function addFiles(root, fileList) {
 }
 
 async function loadServerSettings(root) {
+  const help = root.querySelector('[data-fill="max-upload-help"]');
+  const input = root.querySelector("[data-file-input]");
   try {
     const payload = await api.settings.get();
     const settings = payload.settings || {};
-    const mb = Number(settings.max_upload_mb);
-    if (Number.isFinite(mb) && mb >= 1 && mb <= 25) {
-      maxFileBytes = mb * 1024 * 1024;
-      const help = root.querySelector('[data-fill="max-upload-help"]');
-      if (help) {
-        help.textContent = `PDF, PNG or JPG files, up to ${mb} MB each. Files stay in your browser for now — uploading and processing arrive in a later phase.`;
-      }
+    const mb = resolveUploadLimitMB(settings);
+    if (mb === null) {
+      throw new Error("The server did not provide a valid upload limit.");
     }
+    maxFileBytes = mb * 1024 * 1024;
+    if (help) {
+      help.textContent = `PDF, PNG or JPG files, up to ${mb} MB each. Files stay in your browser for now — uploading and processing arrive in a later phase.`;
+    }
+    if (input) input.disabled = false;
     if (!optionsTouched && settings.default_feedback_detail) {
       draft.options.feedbackDetail = settings.default_feedback_detail;
       const select = root.querySelector("#opt-feedback-detail");
       if (select) select.value = settings.default_feedback_detail;
     }
   } catch {
-    // The page keeps the documented 25 MB and detailed-feedback defaults.
+    maxFileBytes = null;
+    if (help) {
+      help.textContent =
+        "The current upload limit could not be read from the server. Reload the page to try again.";
+    }
   }
 }
 
-export function mount(root) {
-  initTabs(root);
+export function mount(root, { signal } = {}) {
+  initTabs(root, { signal });
   loadServerSettings(root);
 
   root.addEventListener("change", (event) => {
@@ -379,7 +396,7 @@ export function mount(root) {
       if (group === "options") optionsTouched = true;
       draft[group][key] = target.type === "checkbox" ? target.checked : target.value;
     }
-  });
+  }, { signal });
 
   root.addEventListener("input", (event) => {
     const target = event.target;
@@ -390,7 +407,7 @@ export function mount(root) {
       if (group === "options") optionsTouched = true;
       draft[group][key] = target.value;
     }
-  });
+  }, { signal });
 
   root.addEventListener("click", (event) => {
     const target = event.target;
@@ -421,5 +438,5 @@ export function mount(root) {
         refreshReview(root);
       }
     }
-  });
+  }, { signal });
 }

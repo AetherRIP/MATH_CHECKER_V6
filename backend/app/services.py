@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping
 
-from .db import DatabaseUnavailableError
-from .models import validate_settings_update
+from .db import DATABASE_UNAVAILABLE_DETAIL, DatabaseUnavailableError
+from .models import SETTINGS_BY_KEY, validate_settings_update
 from .storage import Storage
 
 log = logging.getLogger("mathchecker.services")
@@ -27,6 +27,13 @@ class SettingsService:
 
     def get(self) -> dict[str, Any]:
         return self.storage.get_settings()
+
+    def limits(self) -> dict[str, dict[str, int | None]]:
+        """Return the server-owned bounds for editable settings."""
+        cap = SETTINGS_BY_KEY["max_upload_mb"]
+        return {
+            "max_upload_mb": {"minimum": cap.minimum, "maximum": cap.maximum},
+        }
 
     def update(self, changes: Mapping[str, Any]) -> dict[str, Any]:
         validated = validate_settings_update(changes)
@@ -49,7 +56,7 @@ class StatsService:
         status = self.storage.database_status()
         if not status.ready:
             raise DatabaseUnavailableError(
-                status.detail or "The local database is not available."
+                status.detail or DATABASE_UNAVAILABLE_DETAIL
             )
         stats = self.storage.stats()
         return {

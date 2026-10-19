@@ -9,17 +9,16 @@ from __future__ import annotations
 
 from fastapi import Request
 
+from ..db import DATABASE_UNAVAILABLE_DETAIL
 from ..services import SettingsService, StatsService
 from ..storage import Storage
 from .errors import ApiError
-
-_DATABASE_UNAVAILABLE = "The local database is not available."
 
 
 def get_storage(request: Request) -> Storage:
     storage = getattr(request.app.state, "storage", None)
     if storage is None:
-        raise ApiError(503, "database_unavailable", _DATABASE_UNAVAILABLE)
+        raise ApiError(503, "database_unavailable", DATABASE_UNAVAILABLE_DETAIL)
     return storage
 
 

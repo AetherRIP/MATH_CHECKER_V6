@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseHash, resolveRoute, routes, DEFAULT_PATH } from "../js/router.js";
+import { createPageHost, parseHash, resolveRoute, routes, DEFAULT_PATH } from "../js/router.js";
 
 test("parseHash normalises hash values to route paths", () => {
   assert.equal(parseHash("#/dashboard"), "/dashboard");
@@ -43,4 +43,30 @@ test("route table is well-formed and collision-free", () => {
     assert.ok(route.title.length > 0);
     assert.ok(!route.path.endsWith("/"), "no trailing slashes in the table");
   }
+});
+
+test("page host tears down listeners so one click sends one request", () => {
+  const container = new EventTarget();
+  const host = createPageHost(container);
+  let requests = 0;
+  let unmounted = 0;
+  const page = {
+    mount(root, { signal }) {
+      root.addEventListener("click", () => { requests += 1; }, { signal });
+    },
+    unmount() {
+      unmounted += 1;
+    },
+  };
+
+  host.mount(page, { path: "/dashboard" });
+  host.mount(page, { path: "/dashboard" });
+  assert.equal(unmounted, 1, "the previous page receives its unmount contract");
+
+  container.dispatchEvent(new Event("click"));
+  assert.equal(requests, 1, "only the current page listener remains");
+
+  host.unmount();
+  container.dispatchEvent(new Event("click"));
+  assert.equal(requests, 1, "unmount removes the last listener too");
 });

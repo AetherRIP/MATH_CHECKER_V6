@@ -17,6 +17,7 @@ from ..config import (
     ai_provider_configured,
     classroom_configured,
 )
+from ..db import DATABASE_UNAVAILABLE_DETAIL
 from ..models import DatabaseStatus
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -35,7 +36,7 @@ def system_status(request: Request) -> dict:
     if storage is None:
         database = DatabaseStatus(
             ready=False,
-            detail="Database is unavailable.",
+            detail=DATABASE_UNAVAILABLE_DETAIL,
         )
     else:
         database = storage.database_status()

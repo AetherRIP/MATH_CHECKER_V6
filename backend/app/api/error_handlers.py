@@ -11,16 +11,18 @@ import logging
 import sqlite3
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ..db import DATABASE_UNAVAILABLE_DETAIL, DatabaseUnavailableError
 from ..logging_setup import new_request_id
 from ..models import SettingsValidationError
 from .errors import ApiError, error_envelope
 
 log = logging.getLogger("mathchecker.api")
 
-_DATABASE_UNAVAILABLE = "The local database is not available."
 _INVALID_REQUEST = "The request could not be processed because it contains invalid data."
 _INTERNAL_ERROR = "An unexpected error occurred."
 
@@ -36,13 +38,17 @@ def _json(
     message: str,
     request_id: str,
     fields: list[dict[str, str]] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    response_headers = {"X-Request-ID": request_id}
+    if headers:
+        response_headers.update(headers)
     return JSONResponse(
         status_code=status_code,
         content=error_envelope(
             code=code, message=message, request_id=request_id, fields=fields
         ),
-        headers={"X-Request-ID": request_id},
+        headers=response_headers,
     )
 
 
@@ -118,6 +124,25 @@ def register_error_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
+    @app.exception_handler(DatabaseUnavailableError)
+    async def handle_database_unavailable(
+        request: Request, exc: DatabaseUnavailableError
+    ) -> JSONResponse:
+        request_id = _request_id(request)
+        log.warning(
+            "database unavailable [%s] %s %s: %s",
+            request_id,
+            request.method,
+            request.url.path,
+            exc,
+        )
+        return _json(
+            503,
+            code="database_unavailable",
+            message=DATABASE_UNAVAILABLE_DETAIL,
+            request_id=request_id,
+        )
+
     @app.exception_handler(sqlite3.Error)
     async def handle_database_error(request: Request, exc: sqlite3.Error) -> JSONResponse:
         request_id = _request_id(request)
@@ -130,8 +155,44 @@ def register_error_handlers(app: FastAPI) -> None:
         return _json(
             503,
             code="database_unavailable",
-            message=_DATABASE_UNAVAILABLE,
+            message=DATABASE_UNAVAILABLE_DETAIL,
             request_id=request_id,
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_error(
+        request: Request, exc: StarletteHTTPException
+    ) -> Response:
+        # Non-API 404s keep FastAPI's standard response; every API failure
+        # uses the one documented envelope.
+        if not request.url.path.startswith("/api/"):
+            return await http_exception_handler(request, exc)
+
+        request_id = _request_id(request)
+        if exc.status_code == 404:
+            code = "not_found"
+            message = "The requested API endpoint was not found."
+        elif exc.status_code == 405:
+            code = "method_not_allowed"
+            message = "The request method is not allowed for this endpoint."
+        else:
+            code = "http_error"
+            message = str(exc.detail) or "The request could not be completed."
+
+        log.info(
+            "http error [%s] %s %s -> %s %s",
+            request_id,
+            request.method,
+            request.url.path,
+            exc.status_code,
+            code,
+        )
+        return _json(
+            exc.status_code,
+            code=code,
+            message=message,
+            request_id=request_id,
+            headers=exc.headers,
         )
 
     @app.exception_handler(Exception)

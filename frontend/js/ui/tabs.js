@@ -49,12 +49,12 @@ function selectTab(root, tabId) {
   }
 }
 
-export function initTabs(root) {
+export function initTabs(root, { signal } = {}) {
   for (const tabsRoot of root.querySelectorAll("[data-tabs]")) {
     tabsRoot.addEventListener("click", (event) => {
       const tab = event.target instanceof Element ? event.target.closest("[data-tab]") : null;
       if (tab) selectTab(tabsRoot, tab.dataset.tab);
-    });
+    }, { signal });
 
     tabsRoot.addEventListener("keydown", (event) => {
       const tab = event.target instanceof Element ? event.target.closest("[data-tab]") : null;
@@ -71,6 +71,6 @@ export function initTabs(root) {
         selectTab(tabsRoot, next.dataset.tab);
         next.focus();
       }
-    });
+    }, { signal });
   }
 }

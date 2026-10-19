@@ -81,6 +81,22 @@ def test_openapi_document_is_available(client):
     assert response.json()["info"]["title"] == "Math Checker V6"
 
 
-def test_unknown_api_route_is_404(client):
+def test_unknown_api_route_uses_the_error_envelope(client):
     response = client.get("/api/does-not-exist")
     assert response.status_code == 404
+    body = response.json()
+    assert body["error"]["code"] == "not_found"
+    assert body["error"]["message"]
+    assert body["error"]["request_id"]
+    assert "detail" not in body
+
+
+def test_disallowed_api_method_uses_the_error_envelope(client):
+    response = client.post("/api/health")
+    assert response.status_code == 405
+    body = response.json()
+    assert body["error"]["code"] == "method_not_allowed"
+    assert body["error"]["message"]
+    assert body["error"]["request_id"]
+    assert "detail" not in body
+    assert "GET" in response.headers.get("allow", "")

@@ -53,3 +53,16 @@ def test_degraded_start_still_rejects_invalid_settings(monkeypatch, tmp_path):
         response = client.patch("/api/settings", json={"max_upload_mb": 0})
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "database_unavailable"
+
+
+def test_database_failure_after_startup_returns_safe_503(client):
+    with client.app.state.storage.database.connection() as conn:
+        conn.execute("DROP TABLE correction_results")
+
+    response = client.get("/api/database/stats")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"]["code"] == "database_unavailable"
+    assert body["error"]["message"]
+    assert body["error"]["request_id"]
+    assert "correction_results" not in response.text
