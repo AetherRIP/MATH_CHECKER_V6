@@ -213,6 +213,8 @@ function loadServerSettings(root) {
       applyServerSettings(root, payload);
     })
     .catch((error) => {
+      const storageCap = root.querySelector('[data-fill="storage-max-upload"]');
+      if (storageCap) storageCap.textContent = "Unavailable";
       if (section) {
         section.innerHTML = toHTML(
           errorState({

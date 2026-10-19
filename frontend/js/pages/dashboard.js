@@ -236,7 +236,9 @@ async function loadStats(root) {
       section.innerHTML = toHTML(
         errorState({
           title: "Database statistics unavailable",
-          description: "The application server could not be reached to read the local database.",
+          description:
+            err?.message ||
+            "The application server could not be reached to read the local database.",
           actions: button({ label: "Retry", iconName: "refresh", attrs: 'data-action="retry-stats"' }),
         }),
       );
