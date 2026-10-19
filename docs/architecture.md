@@ -80,6 +80,7 @@ backend/
 ├── app/
 │   ├── config.py      # MC6_* env vars, minimal .env loader, app constants
 │   ├── main.py        # FastAPI app: lifespan, routers, error handler, static mount
+│   ├── engine.py      # Phase 2 engine contract (types + Protocol) + honest stub
 │   └── api/
 │       ├── system.py  # GET /api/health, GET /api/system/status
 │       └── storage.py # GET /api/storage/summary (bounded walk)
@@ -151,11 +152,16 @@ Frontend payload: **105 KB raw / 34 KB gzip** for the entire application
 ## 6. Integration boundary for later phases (important)
 
 The correction engine must **not** be copied into page components. The seams
-are already in place:
+are already in place — the engine contract is written ahead of any engine
+code: `backend/app/engine.py` (data types, the `CorrectionEngine` protocol,
+the input policy, and the honest `UnavailableEngine` stub) and
+`docs/phase-2-contract.md` (HTTP surface, job lifecycle, error semantics,
+frontend wiring). Phase 2 implements the protocol and registers it in
+`get_engine()`.
 
 | Future feature | Backend seam | Frontend seam |
 |---|---|---|
-| AI correction | new `backend/app/api/correction.py` router + engine module behind a service interface | `api.js` gains `correction.*` calls; `pages/correction.js` fills its existing jobs/results tabs |
+| AI correction | implement `CorrectionEngine` per `docs/phase-2-contract.md`; new `backend/app/api/corrections.py` router maps its errors | `api.js` gains `corrections.*` calls; `pages/correction.js` fills its existing jobs/results tabs |
 | PDF processing | engine module (reuse V5's `engine/pdf_inspect.py` ideas) invoked from the correction service | existing file-selection flow uploads its draft |
 | Google Classroom | `backend/app/api/classroom.py` + provider module; OAuth material server-side only | Settings' Classroom placeholder section + a future page routed via `router.js` |
 | Reports / grading | `backend/app/api/reports.py` | new page module; Storage page already has a "Reports" category |
