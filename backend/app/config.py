@@ -66,6 +66,7 @@ class Config:
     log_level: str
     data_dir: Path
     tmp_dir: Path
+    database_path: Path
 
 
 def get_config(host: str | None = None, port: int | None = None) -> Config:
@@ -110,6 +111,9 @@ def get_config(host: str | None = None, port: int | None = None) -> Config:
         log_level=level,
         data_dir=data_dir,
         tmp_dir=tmp_dir,
+        # SQLite lives inside the configured data directory so MC6_DATA_DIR
+        # remains the single storage override for local and cloud runs.
+        database_path=data_dir / "app.db",
     )
 
 
