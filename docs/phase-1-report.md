@@ -10,7 +10,9 @@
 >
 > **Phase 3 update:** the correction engine is implemented in
 > `backend/app/correction/` and documented in `docs/phase-3-report.md`.
-> Phase 4 still owns the upload/job/result integration and the UI wiring.
+>
+> **Phase 4 update:** uploads, durable jobs, persisted results and the UI
+> wiring are implemented and documented in `docs/phase-4-report.md`.
 
 ---
 

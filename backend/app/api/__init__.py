@@ -1,5 +1,6 @@
-"""HTTP API route modules (system, settings, database and storage).
+"""HTTP API route modules.
 
-Phase 3 adds no routes: the correction engine is exposed through
-``app.engine.get_engine()``. Upload, job and report routes are Phase 4 work.
+Phase 4 adds the correction job surface (upload, recent jobs, status and a
+persisted report) in ``corrections.py``. Routes stay thin and delegate to the
+job service and correction engine.
 """

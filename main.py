@@ -13,6 +13,7 @@ file (see .env.example). No AI key or credential is required to start.
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 from pathlib import Path
 
@@ -23,7 +24,7 @@ sys.path.insert(0, str(BACKEND))
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python main.py",
-        description="Math Checker V6 — AI-assisted mathematics homework correction (Phase 3 correction engine).",
+        description="Math Checker V6 — AI-assisted mathematics homework correction (Phase 4 application workflow).",
     )
     parser.add_argument("--host", help="interface to bind (default: MC6_HOST or 127.0.0.1)")
     parser.add_argument("--port", type=int, help="port to listen on (default: MC6_PORT or 8643)")
@@ -84,8 +85,32 @@ def main(argv: list[str] | None = None) -> int:
             "until MC6_AI_API_KEY is set."
         )
     if not classroom_configured():
-        print("Note: Google Classroom integration arrives in a later phase.")
+        print(
+            "Note: Google Classroom is not configured — setup guidance is in "
+            "CLASSROOM_CONFIGURATION.md."
+        )
     print(f"Serving on http://{cfg.host}:{cfg.port}  (Ctrl+C to stop)")
+
+    # Fail with a clear message instead of uvicorn's mid-startup traceback
+    # when the port is already taken (includes our own second instance).
+    # Detection is by CONNECTing: plain bind() is not reliable across
+    # platforms (Windows allows rebinding unless SO_EXCLUSIVEADDRUSE is set).
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(1.0)
+    target_ip = "127.0.0.1" if cfg.host in ("0.0.0.0", "", "*") else cfg.host
+    try:
+        probe.connect((target_ip, cfg.port))
+    except OSError:
+        pass  # nothing is accepting connections — the port is usable
+    else:
+        print(
+            f"Cannot start: {cfg.host}:{cfg.port} is already in use — "
+            "stop the other process or run 'python main.py --port <other>'.",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        probe.close()
 
     import uvicorn
 

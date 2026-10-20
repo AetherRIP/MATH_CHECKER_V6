@@ -1,19 +1,18 @@
-# Math Checker V6 — Phase 3
+# Math Checker V6 — Release (Phase 6)
 
 A lightweight, modular application for correcting Edexcel IGCSE Mathematics
-homework with AI, generating reports, and (in later phases) integrating with
-Google Classroom.
+homework with AI, inspecting persisted question-level results, and
+synchronising marks and correction reports with Google Classroom.
 
 **Phase 1 delivered the interface.** **Phase 2 delivered the backend
 foundation** (SQLite behind one storage boundary, settings, honest status
-endpoints, live UI wiring). **Phase 3 delivers the mathematical correction
-engine**: document validation, PDF extraction, mark-scheme interpretation by a
-configured AI provider, question-level marking, deterministic result
-validation, totals and explicit uncertainty.
-
-The engine is complete and independently testable, but it is not yet wired to
-the browser: uploading, job persistence and result display are **Phase 4**.
-Nothing in the interface pretends otherwise.
+endpoints, live UI wiring). **Phase 3 delivered the mathematical correction
+engine.** **Phase 4 connected them**: a browser upload creates a durable
+correction job, the real Phase 3 engine marks the work, validated results are
+stored atomically in SQLite, and the same result is readable after a refresh
+or application restart. **Phase 5 verified the whole system end-to-end**
+(audit, reliability fixes, a reproducible E2E walkthrough). **Phase 6 verified
+integration and prepared release configuration.**
 
 ---
 
@@ -21,7 +20,7 @@ Nothing in the interface pretends otherwise.
 
 | Layer | Choice |
 |---|---|
-| Backend | Python 3.11+ · FastAPI · uvicorn (3 runtime dependencies, including `pypdf`) |
+| Backend | Python 3.11+ · FastAPI · uvicorn · python-multipart · pypdf |
 | Storage | SQLite via the standard-library `sqlite3` module — **no ORM, no migration package** |
 | AI provider | Gemini REST API through standard-library `urllib` — **no provider SDK** |
 | Frontend | Vanilla HTML/CSS/ES modules — **no build step, no Node toolchain needed to run** |
@@ -45,8 +44,8 @@ python -m venv .venv
 #   .venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
-For a deployment that only needs to run, `requirements.txt` is enough. It now
-includes `pypdf`, used by the engine to validate and extract PDF text.
+For a deployment that only needs to run, `requirements.txt` is enough.
+`python-multipart` parses browser uploads and `pypdf` validates/extracts PDFs.
 
 ## Launch
 
@@ -66,7 +65,9 @@ python main.py --seed-dev        # insert deterministic development data and exi
 ```
 
 Configuration is environment-driven (see `.env.example`). Values already
-present in the process environment always win over `.env`.
+present in the process environment always win over `.env`. The correction
+engine and job service are constructed **once at startup**, so changing
+provider settings requires a restart.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -74,72 +75,85 @@ present in the process environment always win over `.env`.
 | `MC6_PORT` | `8643` | TCP port |
 | `MC6_DEBUG` | `0` | `1` enables verbose logging |
 | `MC6_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` |
-| `MC6_DATA_DIR` | `./data` | application data directory; the SQLite database lives here |
-| `MC6_TMP_DIR` | `<data>/tmp` | temporary directory used by Phase 4 job workspaces |
+| `MC6_DATA_DIR` | `./data` | application data directory; SQLite and upload workspaces live here |
+| `MC6_TMP_DIR` | `<data>/tmp` | application temporary directory |
 | `MC6_AI_API_KEY` | — | **enables correction**; server-side only |
-| `MC6_AI_MODEL` | `gemini-2.5-flash` | model used for marking |
+| `MC6_AI_MODEL` | `gemini-3.5-flash-lite` | model used for marking |
 | `MC6_AI_BASE_URL` | `https://generativelanguage.googleapis.com` | provider endpoint |
 | `MC6_AI_TIMEOUT_SECONDS` | `180` | per-request timeout (5–600) |
 | `MC6_AI_MAX_RETRIES` | `2` | transient retries (0–5) |
 
 Never commit a filled-in `.env`. The key is never logged, returned by an API,
-or sent to the browser.
+or sent to the browser. Uploaded files are written to
+`<MC6_DATA_DIR>/uploads/<job_id>/` and removed when the job reaches a terminal
+state.
 
-## Correction engine (Phase 3)
-
-The engine is reachable through `backend/app/engine.py` and implemented in
-`backend/app/correction/`. The full behavioral contract is
-[`docs/correction-engine-contract.md`](docs/correction-engine-contract.md).
-
-Pipeline:
+## Correction workflow
 
 ```
-validate request → validate/extract documents → mark-scheme blueprint →
-provider marking → strict JSON parse → mark/maximum validation →
-deterministic answer checks → typed report
+Browser selects files and context
+  → POST /api/corrections (multipart)
+  → job service saves a per-job workspace and validates file bytes
+  → queued row in SQLite
+  → bounded worker marks the job processing
+  → Phase 3 engine (extraction → prompt → provider → JSON validation → checks)
+  → storage validates report invariants and persists items + totals atomically
+  → job completed
+  → GET job/report reads SQLite (no provider call)
+  → browser renders the persisted result
 ```
 
-What it does:
+Lifecycle states: **`queued` → `processing` → `completed` | `failed`**.
+A job is completed only after every question row and the report totals have
+been committed in one transaction. A provider, extraction, validation or
+storage failure marks the job failed with a safe message; it never creates an
+empty successful result. Jobs left active by a process restart are reconciled
+to `failed` on the next startup, and their workspaces are cleaned. Completed
+results remain readable because they live in SQLite, not in the engine's
+process-local registry.
 
-- Rejects missing, empty, corrupt, encrypted, mislabelled or oversized files
-  before any provider call.
-- Extracts PDF text with page numbers; reports pages with no extractable text
-  instead of treating them as blank answers.
-- Requires a mark scheme (file and/or pasted text) and extracts a conservative
-  question/maximum blueprint from it.
-- Sends the student work and mark scheme to the configured model, asking for
-  one question-level result per label with evidence, criteria and explicit
-  uncertainty.
-- Rejects impossible output: duplicate labels, missing marks, text instead of
-  numbers, negative marks, or marks above the question maximum.
-- Recomputes totals and percentages in Python. A partial result never carries
-  a misleading percentage.
-- Turns a question the model did not return into `unresolved`, never `0`.
-- Runs deterministic numeric/fraction/percentage/expression checks and flags
-  contradictions for review **without changing a mark**.
-- Retries transient provider failures a bounded number of times and gives one
-  bounded JSON-repair attempt. Failures produce a failed job with a safe
-  message, never an empty "success".
+Idempotency is supported through the `Idempotency-Key` header
+(8–128 characters, letters/digits/`.`/`_`/`:`/`-`). Retrying the same request
+returns the existing job instead of creating a duplicate.
 
-What it does **not** do yet:
+### API
 
-- upload files from the browser, persist jobs, or display results (Phase 4);
-- independently apply M/A/B/ECF rules in Python — those judgements are made by
-  the model from the mark scheme;
-- generate report files or Edexcel grades;
-- contact Google Classroom.
+| Endpoint | Purpose | Success | Notable failures |
+|---|---|---|---|
+| `GET /api/health` | liveness probe | `200 {"status":"ok"}` | — |
+| `GET /api/system/status` | version, database/engine readiness, feature flags | `200` | — |
+| `GET /api/settings` | current server settings | `200` | `503 database_unavailable` |
+| `PATCH /api/settings` | update `max_upload_mb` / `default_feedback_detail` | `200` | `422 invalid_request` |
+| `GET /api/database/stats` | database counts | `200` | `503 database_unavailable` |
+| `GET /api/storage/summary` | bounded storage measurement | `200` | — |
+| `POST /api/corrections` | multipart submit | `202` + job | `422 unsupported_input`, `503 engine_unavailable` |
+| `GET /api/corrections?limit=50` | recent jobs | `200 {"jobs":[...]}` | — |
+| `GET /api/corrections/{job_id}` | durable job state | `200` + job | `404 job_not_found` |
+| `GET /api/corrections/{job_id}/report` | persisted report | `200` + report | `404`, `409 report_not_ready` |
+| `GET /api/classroom/status` | Classroom connection snapshot | `200` | — |
+| `POST /api/classroom/connect` | interactive OAuth connect flow | `200` | `400 classroom_connect_failed` |
+| `POST /api/classroom/disconnect` | clear stored credentials | `200` | — |
+| `GET /api/classroom/courses` | teacher's active courses (cached) | `200 {"courses":[...]}` | `401 auth_required`, `502 classroom_api_error` |
+| `GET /api/classroom/courses/{course_id}/coursework` | coursework list (cached) | `200` | `401`, `502` |
+| `GET /api/classroom/…/submissions` | student submissions (cached) | `200` | `401`, `502` |
+| `GET /api/classroom/coursework/{id}/ops` | publish-operation audit trail | `200 {"ops":[...]}` | — |
 
-## API
+`POST /api/corrections` fields:
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/health` | liveness probe (`{"status": "ok"}`) |
-| `GET /api/system/status` | version, phase, database readiness, live engine state and honest feature flags |
-| `GET /api/settings` | current server settings |
-| `PATCH /api/settings` | update `max_upload_mb` and/or `default_feedback_detail` |
-| `GET /api/database/stats` | student/assignment/submission/correction counts |
-| `GET /api/storage/summary` | real, bounded measurement of the application data directory |
-| `GET /api/openapi.json` | OpenAPI document (the CDN-backed docs UIs are disabled) |
+- `files` (one or more student submissions) — required
+- `mark_scheme_files` (zero or more scheme files)
+- `assignment_title` — required
+- `instructions`, `mark_scheme` (pasted scheme text)
+- `feedback_detail` — `brief` or `detailed`
+- `max_score` — optional positive number; a mismatch is flagged for review,
+  not used to invent marks
+- `Idempotency-Key` header — optional
+
+Accepted bytes: PDF, PNG and JPEG. The server checks the actual file signature,
+not just the browser's content type. The effective cap is the smaller of the
+engine's 25 MB limit and the server's `max_upload_mb` setting (1–25 MB).
+Corrupt, encrypted, empty, mislabelled or oversized files are rejected before
+a job row exists.
 
 Every API failure uses the same envelope:
 
@@ -153,11 +167,15 @@ Every API failure uses the same envelope:
 }
 ```
 
-`/api/system/status` reports the live engine
-(`correction_engine.available`, `.name`, `.reason`) and sets
-`features.ai_correction` / `features.grade_submission` from it.
-`pdf_processing` is true because extraction is implemented. `reports` and
-`background_tasks` remain false until Phase 4.
+A **completed** job may carry a **partial** report: the run finished, but one
+or more questions could not be resolved or verified. Partial reports have no
+percentage and are labelled for review. A **failed** job has an error and no
+report.
+
+`features.ai_correction` and `features.grade_submission` are true only when a
+configured engine, a ready database and a job service are all present.
+`features.reports` remains **false** because downloadable report files are not
+implemented yet.
 
 If the database cannot initialize, the app starts degraded: the UI and
 `/api/health` still work, `/api/system/status` reports
@@ -166,13 +184,18 @@ If the database cannot initialize, the app starts degraded: the UI and
 
 ## Database and settings
 
-- Schema version 1 lives in `backend/app/migrations/001_initial.sql` and is
-  applied through `PRAGMA user_version` by `backend/app/db.py`.
+- Schema version 3. `backend/app/migrations/001_initial.sql` contains the
+  Phase 2 tables; `002_correction_jobs.sql` adds the correction-job tables;
+  `003_classroom.sql` adds the Classroom sync/publish cache tables.
 - Tables: `students`, `assignments`, `submissions`, `correction_results`,
-  `settings`. Phase 3 adds **no** tables; durable correction jobs and
-  question items arrive with Phase 4 as migration `002`.
+  `settings`, `correction_jobs`, `correction_job_files`, `correction_items`.
+- Migrations are applied through `PRAGMA user_version` by
+  `backend/app/db.py`. A newer database is reported as unavailable rather than
+  modified.
 - Missing, draft, submitted, graded and failed work are distinct states; a
   zero mark is stored as a real `0`, not as “no result”.
+- Question rows preserve labels, marks, maxima, status, feedback, evidence,
+  criteria, verification, warnings and review flags.
 - Lesson codes are stored exactly as entered (`CH1L1`, `CH1L13`).
 - Server settings are operational only: `max_upload_mb` (1–25) and
   `default_feedback_detail` (`brief`/`detailed`). Browser preferences remain
@@ -202,61 +225,102 @@ cd frontend && npm test
 # equivalent: node --test "tests/*.test.mjs"
 ```
 
-Tests never contact an external AI provider. Provider behaviour is tested
-against a local HTTP stub, and engine orchestration uses a deterministic fake
-model client. That means the suite verifies the pipeline, validation and
-failure handling — **not** the live model's marking accuracy.
+The automated suite never contacts an external AI provider. Provider behavior
+is tested against a local HTTP stub, and engine orchestration uses a
+deterministic fake model client. `test_api_corrections.py` runs the **real**
+Phase 3 engine and the real job service through the HTTP API, with only the
+remote provider replaced by a local stub. That verifies the integration,
+persistence and failure paths — **not** the live model's marking accuracy.
+
+A separate one-off live run against Gemini (default `gemini-3.5-flash-lite`
+configuration, bundled fixture PDFs) completed with 9/10 and persisted the same
+per-question report. The automated suite remains provider-free; accuracy across
+a wider range of real submissions has not been evaluated.
+
+Phase 4 coverage includes:
+
+- job creation, `queued → processing → completed`, failure, idempotency,
+  restart reconciliation and temporary-file cleanup;
+- report persistence and total/maximum/percentage consistency checks;
+- real multipart uploads, corrupt files, unsupported types, size limits and
+  missing mark schemes;
+- provider failure, missing engine configuration, not-ready and not-found jobs;
+- browser API calls, correction-page states and result rendering;
+- a reload and an application restart reading the same completed result from
+  SQLite.
 
 ## Project structure
 
 ```
 MATH_CHECKER_V6/
 ├── main.py                      # launcher: config → uvicorn
-├── requirements.txt             # fastapi, uvicorn, pypdf
+├── requirements.txt             # fastapi, uvicorn, python-multipart, pypdf
 ├── requirements-dev.txt         # + pytest, httpx
 ├── .env.example                 # configuration template (placeholders only)
 ├── backend/
 │   ├── app/
-│   │   ├── config.py            # MC6_* env vars, database_path, AI config
+│   │   ├── config.py            # MC6_* env vars, paths, AI config
 │   │   ├── logging_setup.py     # application logger + request-id context
 │   │   ├── db.py                # connections, PRAGMAs, migration runner
-│   │   ├── migrations/          # numbered SQL schema files
+│   │   ├── migrations/          # 001 initial, 002 jobs, 003 classroom
 │   │   ├── models.py            # dataclasses, enums, settings definitions
 │   │   ├── storage.py           # the only SQL boundary
 │   │   ├── services.py          # settings and statistics services
 │   │   ├── engine.py            # engine contract + get_engine()
-│   │   ├── correction/          # Phase 3 engine (documents, scheme, prompts,
-│   │   │                        # provider, parsing, validation, verify, service)
+│   │   ├── correction/          # documents, scheme, prompts, provider,
+│   │   │                        # parsing, validation, verify, service, jobs
+│   │   ├── classroom/           # OAuth, client, sync, publish ops
 │   │   ├── main.py              # FastAPI app, lifecycle, static serving
-│   │   └── api/                 # system, settings, database, storage routers
-│   └── tests/                   # pytest suite (incl. PDF factory + provider stub)
+│   │   └── api/                 # system, settings, database, storage,
+│   │                            # corrections, classroom routers
+│   └── tests/                   # pytest suite + PDF factory + provider stub
 ├── frontend/                    # zero-build vanilla SPA
+├── scripts/
+│   └── e2e_walkthrough.py       # reproducible end-to-end verification
+├── PHASE5_AUDIT.md / PHASE5_TEST_REPORT.md /
+│   PHASE5_RELIABILITY_REPORT.md
+├── CLASSROOM_MIGRATION.md / CLASSROOM_CONFIGURATION.md /
+│   CLASSROOM_TEST_REPORT.md
 └── docs/
     ├── architecture.md
     ├── correction-engine-contract.md
-    ├── phase-1-report.md
-    ├── phase-2-report.md
-    ├── phase-3-report.md
+    ├── phase-1..4-reports.md
     └── screenshots/
 ```
 
 ## What works today
 
 - Complete application shell and five pages, all directly navigable.
-- Dashboard: real database counts, submission-status breakdown, and readiness
-  that reads the live engine flag (not a hardcoded promise).
+- Dashboard: real database counts, submission-status breakdown, recent durable
+  jobs, and readiness that reads the live backend state.
+- AI Correction: student-work and mark-scheme selection, browser checks
+  against the server's upload limit, assignment context, options, real
+  multipart submission, job identifier, honest queued/processing states,
+  polling, retry on transient status failures, and question-level results.
+- Results: persisted marks, maxima, percentage (complete reports only),
+  review flags, evidence, warnings and unresolved-question lists. The browser
+  never recalculates marks.
+- Refresh and restart: a completed job and its report remain available; a
+  `?job=` link opens the stored result directly.
+- Failure paths: rejected files, engine unavailable, provider failure, storage
+  failure and missing jobs all produce explicit states, not fabricated results.
 - Settings: real server settings, browser preferences, live diagnostics.
-- Correction page: file selection, validation, review and options draft; the
-  Start action remains disabled with an honest Phase 4 explanation.
 - Storage: real, on-request measurement of the application data directory.
-- Task Manager: planned categories with honest empty states.
-- Correction engine: the full Phase 3 pipeline above, independently testable.
+- Task Manager: correction-job guidance plus planned categories with honest
+  empty states.
 
-## Not in Phase 3
+## Not in this release
 
-Upload endpoints and durable jobs · browser result display · report files ·
-Classroom sync · classes/rosters · authentication · a distributed worker
-system · a second database or configuration system · a UI redesign.
+- Downloadable/generated report files and Edexcel grade boundaries
+  (`features.reports` stays false).
+- Google Classroom grade/attachment write-back **over HTTP** — the service,
+  OAuth flow, cache and safety rules exist and are tested at the service
+  layer; the browser-facing routes are future work.
+- Authentication and multi-tenant deployment.
+- A distributed worker queue or multi-process scheduler. Jobs run in a
+  bounded in-process daemon worker; the application is intended as a
+  single-process deployment. A restart reconciles active jobs to `failed`
+  rather than resuming them.
 
 ## Troubleshooting
 
@@ -268,6 +332,11 @@ silently.
 **`MC6_AI_TIMEOUT_SECONDS must be an integer` / similar**
 An optional provider setting has an invalid value. Fix or remove it; the error
 never prints the key.
+
+**Correction failed**
+Open the job on the AI Correction page; the safe error is shown there. Common
+causes are an invalid provider key, rate limiting, a timeout, or a PDF whose
+content could not be read. The uploaded workspace is removed after failure.
 
 **Port 8643 is already in use**
 Start on another one: `python main.py --port 8650`.
@@ -282,7 +351,7 @@ The frontend is plain files; hard-refresh (Ctrl+Shift+R) after replacing them.
 
 **Where are my files stored?**
 Runtime data lives under `data/` (or `MC6_DATA_DIR`). The SQLite database is
-`app.db` inside it.
+`app.db` inside it. Upload workspaces are under `uploads/` and are temporary.
 
 ## License
 

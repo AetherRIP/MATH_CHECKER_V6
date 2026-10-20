@@ -26,6 +26,7 @@ MAX_DEPTH = 8
 CATEGORIES = (
     ("persistent", "Persistent data", "Application data that survives restarts.", None),
     ("temporary", "Temporary files", "Scratch files created while processing.", "tmp"),
+    ("uploads", "Job uploads", "Input files owned by queued or processing jobs.", "uploads"),
     ("reports", "Reports", "Generated correction reports.", "reports"),
     ("cache", "Cached assets", "Reusable local assets.", "cache"),
 )

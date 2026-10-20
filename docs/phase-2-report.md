@@ -9,6 +9,10 @@ and status endpoints, consistent error handling, deterministic fixtures, and
 a UI that reads live backend data. The AI correction engine is **not** part
 of this phase; it moves to Phase 3.
 
+> **Phase 4 update:** schema version 2 adds durable correction jobs and
+> question rows. Upload → real engine → persisted result → UI is implemented;
+> see `docs/phase-4-report.md`.
+
 ---
 
 ## 1. Files created and modified

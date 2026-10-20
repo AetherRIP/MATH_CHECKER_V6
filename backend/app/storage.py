@@ -10,15 +10,30 @@ submission graded) run in one SQLite transaction.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
+from collections.abc import Sequence
 from typing import Any, Mapping
 
 from .db import Database
+from .engine import (
+    ACCEPTED_MEDIA_TYPES,
+    MAX_FILES,
+    QUESTION_MARKED,
+    QUESTION_STATUSES,
+    REPORT_COMPLETED,
+    REPORT_PARTIAL,
+    CorrectionReport,
+    JobStatus,
+    MarkedItem,
+)
 from .models import (
     DEFAULT_SETTINGS,
     SETTINGS_BY_KEY,
     Assignment,
+    CorrectionJobFile,
+    CorrectionJobRecord,
     CorrectionOutcome,
     CorrectionResult,
     DatabaseStats,
@@ -39,6 +54,32 @@ from .models import (
 log = logging.getLogger("mathchecker.storage")
 
 _UNSET = object()
+
+# Raw Classroom states that mean "the student has handed something in".
+_TURNED_IN_STATES = ("TURNED_IN", "STUDENT_EDITED_AFTER_TURN_IN")
+
+
+def gc_extract_attachment_ids(submission: Mapping[str, Any]) -> list[str]:
+    """Stable Drive file ids attached to one StudentSubmission."""
+    ids: list[str] = []
+    for attachment in (submission.get("assignmentSubmission") or {}).get(
+        "attachments", []
+    ) or []:
+        drive = attachment.get("driveFile") or {}
+        if drive.get("id"):
+            ids.append(str(drive["id"]))
+    return ids
+
+
+def _classroom_due_str(item: Mapping[str, Any]) -> str | None:
+    due = item.get("dueDate")
+    if not due:
+        return None
+    due_time = item.get("dueTime") or {}
+    return (
+        f"{due.get('year')}-{due.get('month', 0):02d}-{due.get('day', 0):02d} "
+        f"{due_time.get('hours', 0):02d}:{due_time.get('minutes', 0):02d}"
+    )
 
 
 class StorageError(RuntimeError):
@@ -586,6 +627,720 @@ class Storage:
             row = _fetch_correction_for_submission(conn, submission_id)
         return _correction_from_row(row) if row else None
 
+    # --- Google Classroom (schema version 3) -----------------------------
+
+    def classroom_courses_fresh(self, newer_than: float) -> list[dict]:
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM classroom_courses ORDER BY name"
+            ).fetchall()
+        if not rows:
+            return []
+        if min(float(row["fetched_at"]) for row in rows) < newer_than:
+            return []
+        return [dict(row) for row in rows]
+
+    def classroom_replace_courses(
+        self, courses: Sequence[Mapping[str, Any]], *, fetched_at: float
+    ) -> None:
+        with self.database.transaction() as conn:
+            for course in courses:
+                conn.execute(
+                    """
+                    INSERT INTO classroom_courses(
+                        id, name, section, enrollment_code, state, update_time, fetched_at)
+                    VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name=excluded.name, section=excluded.section,
+                        enrollment_code=excluded.enrollment_code,
+                        state=excluded.state, update_time=excluded.update_time,
+                        fetched_at=excluded.fetched_at
+                    """,
+                    (
+                        str(course.get("id") or ""),
+                        str(course.get("name") or "Unnamed course"),
+                        course.get("section"),
+                        course.get("enrollmentCode"),
+                        course.get("courseState") or course.get("state"),
+                        course.get("updateTime"),
+                        fetched_at,
+                    ),
+                )
+
+    def classroom_course_cached(self, course_id: str) -> bool:
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM classroom_courses WHERE id = ?", (course_id,)
+            ).fetchone()
+        return row is not None
+
+    def classroom_course_of(self, coursework_id: str) -> str | None:
+        """The cached course that owns this coursework (Google ids are unrelated).
+
+        Coursework ids and course ids come from independent Google id spaces,
+        so callers MUST resolve the parent course through cached data, never
+        by parsing the coursework id.
+        """
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT course_id FROM classroom_coursework WHERE id = ?",
+                (coursework_id,),
+            ).fetchone()
+        return str(row["course_id"]) if row and row["course_id"] else None
+
+    def classroom_coursework_fresh(self, course_id: str, newer_than: float) -> bool:
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT MAX(fetched_at) AS latest FROM classroom_coursework "
+                "WHERE course_id = ?",
+                (course_id,),
+            ).fetchone()
+        return bool(row and row["latest"] and float(row["latest"]) >= newer_than)
+
+    def classroom_coursework_rows(self, course_id: str) -> list[dict]:
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM classroom_coursework WHERE course_id = ? "
+                "AND deleted_in_classroom = 0 ORDER BY update_time DESC",
+                (course_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def classroom_replace_coursework(
+        self,
+        course_id: str,
+        items: Sequence[Mapping[str, Any]],
+        *,
+        fetched_at: float,
+        live_ids: set[str],
+    ) -> None:
+        now = _timestamp(utc_now(), "fetched_at_iso")
+        with self.database.transaction() as conn:
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO classroom_coursework(
+                        id, course_id, title, classroom_title, max_points, state,
+                        due_date, alternate_link, description, update_time,
+                        fetched_at, managed, deleted_in_classroom)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,
+                        COALESCE((SELECT managed FROM classroom_coursework WHERE id = ?), 0),
+                        0)
+                    ON CONFLICT(id) DO UPDATE SET
+                        title=excluded.title, classroom_title=excluded.classroom_title,
+                        max_points=excluded.max_points, state=excluded.state,
+                        due_date=excluded.due_date,
+                        alternate_link=excluded.alternate_link,
+                        description=excluded.description,
+                        update_time=excluded.update_time,
+                        fetched_at=excluded.fetched_at,
+                        deleted_in_classroom=0
+                    """,
+                    (
+                        str(item.get("id") or ""),
+                        course_id,
+                        str(item.get("title") or "Untitled assignment"),
+                        str(item.get("title") or ""),
+                        item.get("maxPoints"),
+                        item.get("state"),
+                        _classroom_due_str(item),
+                        item.get("alternateLink"),
+                        item.get("description"),
+                        item.get("updateTime"),
+                        fetched_at,
+                        str(item.get("id") or ""),
+                    ),
+                )
+            # A coursework Classroom no longer lists is DELETED, not destroyed:
+            # archive it so cached history survives without stale polling.
+            existing = conn.execute(
+                "SELECT id FROM classroom_coursework WHERE course_id = ? "
+                "AND deleted_in_classroom = 0",
+                (course_id,),
+            ).fetchall()
+            for row in existing:
+                if str(row["id"]) in live_ids:
+                    continue
+                conn.execute(
+                    "UPDATE classroom_coursework SET deleted_in_classroom = 1, "
+                    "allowlisted = 0 WHERE id = ?",
+                    (str(row["id"]),),
+                )
+
+    def classroom_record_managed_coursework(
+        self, *, coursework_id: str, course_id: str, title: str,
+        max_points: float | None = None, alternate_link: str | None = None,
+    ) -> None:
+        """Persist that THIS app created the coursework (managed = 1)."""
+        now = _timestamp(utc_now(), "managed_iso")
+        with self.database.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO classroom_coursework(
+                    id, course_id, title, classroom_title, max_points, state,
+                    alternate_link, fetched_at, managed, deleted_in_classroom)
+                VALUES(?,?,?,?,?,?,?,? , 1, 0)
+                ON CONFLICT(id) DO UPDATE SET
+                    managed=1, title=excluded.title,
+                    max_points=COALESCE(excluded.max_points, classroom_coursework.max_points),
+                    alternate_link=COALESCE(excluded.alternate_link,
+                                            classroom_coursework.alternate_link),
+                    deleted_in_classroom=0
+                """,
+                (coursework_id, course_id, title, title, max_points, "PUBLISHED",
+                 alternate_link, now),
+            )
+
+    def classroom_course_of_submission(self, submission_id: str) -> str | None:
+        """The cached course that owns one student submission."""
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT course_id FROM classroom_submissions WHERE submission_id = ?",
+                (submission_id,),
+            ).fetchone()
+        return str(row["course_id"]) if row and row["course_id"] else None
+
+    def classroom_submission_rows(self, coursework_id: str) -> list[dict]:
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM classroom_submissions WHERE coursework_id = ? "
+                "ORDER BY COALESCE(student_name, student_id)",
+                (coursework_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def classroom_submissions_fresh(self, coursework_id: str, newer_than: float) -> bool:
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT MAX(last_synced_at) AS latest FROM classroom_submissions "
+                "WHERE coursework_id = ?",
+                (coursework_id,),
+            ).fetchone()
+        return bool(row and row["latest"] and float(row["latest"]) >= newer_than)
+
+    def classroom_replace_submissions(
+        self,
+        coursework_id: str,
+        submissions: Sequence[Mapping[str, Any]],
+        *,
+        roster: Mapping[str, Mapping[str, Any]],
+        now_ts: float,
+    ) -> None:
+        with self.database.transaction() as conn:
+            seen: set[str] = set()
+            for submission in submissions:
+                submission_id = str(submission.get("id") or "")
+                if not submission_id:
+                    continue
+                seen.add(submission_id)
+                profile = roster.get(submission.get("userId")) or {}
+                attachments = gc_extract_attachment_ids(submission)
+                conn.execute(
+                    """
+                    INSERT INTO classroom_submissions(
+                        submission_id, course_id, coursework_id, student_id,
+                        student_name, student_email, attachment_id, current_state,
+                        previous_state, late, assigned_grade, draft_grade,
+                        max_points, data_quality, last_synced_at, first_seen_at,
+                        sync_version)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,
+                           ?,?,?,?,?,
+                           COALESCE((SELECT sync_version + 1
+                                     FROM classroom_submissions
+                                     WHERE submission_id = ?), 1))
+                    ON CONFLICT(submission_id) DO UPDATE SET
+                        student_name=excluded.student_name,
+                        student_email=excluded.student_email,
+                        previous_state=classroom_submissions.current_state,
+                        current_state=excluded.current_state,
+                        late=excluded.late,
+                        assigned_grade=excluded.assigned_grade,
+                        draft_grade=excluded.draft_grade,
+                        max_points=excluded.max_points,
+                        data_quality=excluded.data_quality,
+                        sync_error=NULL,
+                        last_synced_at=excluded.last_synced_at,
+                        sync_version=classroom_submissions.sync_version + 1
+                    """,
+                    (
+                        submission_id,
+                        str(submission.get("courseId") or ""),
+                        coursework_id,
+                        str(submission.get("userId") or ""),
+                        (profile.get("name") or {}).get("fullName"),
+                        profile.get("emailAddress"),
+                        attachments[0] if attachments else None,
+                        str(submission.get("state") or "UNKNOWN"),
+                        None,
+                        int(bool(submission.get("late"))),
+                        submission.get("assignedGrade"),
+                        submission.get("draftGrade"),
+                        submission.get("maxPoints") if "maxPoints" in submission else None,
+                        "VERIFIED" if submission.get("state") in _TURNED_IN_STATES else "UNKNOWN",
+                        now_ts,
+                        now_ts,
+                        submission_id,
+                    ),
+                )
+
+    def classroom_link_job(self, submission_id: str, job_id: str) -> None:
+        with self.database.transaction() as conn:
+            conn.execute(
+                "UPDATE classroom_submissions SET correction_job_id = ? "
+                "WHERE submission_id = ?",
+                (job_id, submission_id),
+            )
+
+    def classroom_submission_target(
+        self, submission_id: str
+    ) -> dict | None:
+        """Stable-id mapping (course, coursework, student) for one submission."""
+        with self.database.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT cs.submission_id, cs.course_id, cs.coursework_id,
+                       cs.student_id, cs.correction_job_id, cw.managed,
+                       cw.title
+                  FROM classroom_submissions cs
+                  LEFT JOIN classroom_coursework cw ON cw.id = cs.coursework_id
+                 WHERE cs.submission_id = ?
+                """,
+                (submission_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def classroom_insert_publish_op(
+        self, *, coursework_id: str, submission_id: str, op_type: str,
+        payload: str, student_id: str | None, job_id: str | None,
+        now_iso: str, status: str = "pending",
+    ) -> str:
+        op_id = new_id()
+        with self.database.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO classroom_publish_ops(
+                    id, coursework_id, submission_id, student_id, op_type,
+                    payload_json, status, result_job_id, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    op_id, coursework_id, submission_id, student_id, op_type,
+                    payload, status, job_id, now_iso, now_iso,
+                ),
+            )
+        return op_id
+
+    def classroom_finish_publish_op(
+        self, op_id: str, *, status: str, message: str | None,
+        http_status: int | None, error_code: str | None,
+        drive_file_id: str | None, finished_at: str,
+    ) -> dict:
+        with self.database.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE classroom_publish_ops SET
+                    status=?, message=?, http_status=?, error_code=?,
+                    drive_file_id=?, finished_at=?, updated_at=?
+                WHERE id=?
+                """,
+                (status, message, http_status, error_code, drive_file_id,
+                 finished_at, finished_at, op_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM classroom_publish_ops WHERE id = ?", (op_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("Classroom publish operation was not found.")
+        return dict(row)
+
+    def classroom_publish_ops(self, coursework_id: str, *, limit: int = 100) -> list[dict]:
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM classroom_publish_ops WHERE coursework_id = ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (coursework_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def classroom_canonical_report(self, submission_id: str) -> dict | None:
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM classroom_canonical_reports WHERE submission_id = ?",
+                (submission_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def classroom_record_canonical_report(
+        self, submission_id: str, *, job_id: str, drive_file_id: str | None,
+        now_iso: str,
+    ) -> None:
+        with self.database.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO classroom_canonical_reports(
+                    submission_id, job_id, drive_file_id, updated_at)
+                VALUES(?,?,?,?)
+                ON CONFLICT(submission_id) DO UPDATE SET
+                    job_id=excluded.job_id,
+                    drive_file_id=excluded.drive_file_id,
+                    updated_at=excluded.updated_at
+                """,
+                (submission_id, job_id, drive_file_id, now_iso),
+            )
+
+    # --- Correction jobs (Phase 4) ---------------------------------------
+
+    def create_correction_job(
+        self,
+        *,
+        job_id: str,
+        assignment_title: str,
+        instructions: str = "",
+        mark_scheme_text: str = "",
+        feedback_detail: str = "detailed",
+        max_score: float | None = None,
+        partial_credit: bool = True,
+        files: Sequence[CorrectionJobFile],
+        idempotency_key: str | None = None,
+        created_at: str | None = None,
+    ) -> CorrectionJobRecord:
+        """Create a job in ``queued`` state and record its input metadata.
+
+        File bytes are never handled here; the caller owns the upload
+        workspace. ``mark_scheme_text`` is retained for the job runner only
+        and is excluded from HTTP serialisation by the API layer.
+        """
+        clean_job_id = _required_text(job_id, "job_id")
+        title = _required_text(assignment_title, "assignment_title")
+        clean_instructions = _text(instructions, "instructions")
+        scheme_text = _text(mark_scheme_text, "mark_scheme_text")
+        clean_detail = _feedback_detail(feedback_detail)
+        clean_max = _optional_number(max_score, "max_score")
+        if clean_max is not None and clean_max <= 0:
+            raise ValidationError("max_score must be positive when supplied.")
+        if not isinstance(partial_credit, bool):
+            raise ValidationError("partial_credit must be a boolean.")
+
+        clean_files = tuple(_job_file(file) for file in files)
+        if not clean_files:
+            raise ValidationError("At least one submission file is required.")
+        if len(clean_files) > MAX_FILES:
+            raise ValidationError(f"At most {MAX_FILES} files can be attached.")
+        roles = {file.role for file in clean_files}
+        if "submission" not in roles:
+            raise ValidationError("At least one student submission file is required.")
+        if "mark_scheme" not in roles and not scheme_text.strip():
+            raise ValidationError("A mark scheme file or pasted text is required.")
+        keys = {(file.role, file.position) for file in clean_files}
+        if len(keys) != len(clean_files):
+            raise ValidationError("Correction file positions must be unique per role.")
+
+        clean_key = _optional_text(idempotency_key, "idempotency_key")
+        if clean_key is not None and len(clean_key) > 128:
+            raise ValidationError("idempotency_key is too long.")
+        now = _timestamp(created_at, "created_at") if created_at else utc_now()
+
+        with self.database.transaction() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO correction_jobs(
+                        id, status, assignment_title, instructions, mark_scheme_text,
+                        feedback_detail, max_score, partial_credit, warnings_json,
+                        idempotency_key, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)
+                    """,
+                    (
+                        clean_job_id,
+                        JobStatus.QUEUED.value,
+                        title,
+                        clean_instructions,
+                        scheme_text,
+                        clean_detail,
+                        clean_max,
+                        1 if partial_credit else 0,
+                        clean_key,
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ConflictError(
+                    "A correction job with that id or request key already exists."
+                ) from exc
+
+            for file in clean_files:
+                conn.execute(
+                    """
+                    INSERT INTO correction_job_files(
+                        job_id, role, position, filename, media_type, size_bytes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        clean_job_id,
+                        file.role,
+                        file.position,
+                        file.filename,
+                        file.media_type,
+                        file.size_bytes,
+                    ),
+                )
+            row = _fetch_job(conn, clean_job_id)
+            file_rows = _fetch_job_files(conn, clean_job_id)
+        if row is None:  # pragma: no cover - defensive
+            raise StorageError("Correction job was not stored.")
+        return _job_from_row(row, file_rows)
+
+    def get_correction_job(self, job_id: str) -> CorrectionJobRecord | None:
+        with self.database.connection() as conn:
+            row = _fetch_job(conn, job_id)
+            files = _fetch_job_files(conn, job_id) if row else []
+        return _job_from_row(row, files) if row else None
+
+    def get_correction_job_by_idempotency(
+        self, idempotency_key: str
+    ) -> CorrectionJobRecord | None:
+        key = _required_text(idempotency_key, "idempotency_key")
+        with self.database.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM correction_jobs WHERE idempotency_key = ?", (key,)
+            ).fetchone()
+            files = _fetch_job_files(conn, str(row["id"])) if row else []
+        return _job_from_row(row, files) if row else None
+
+    def list_correction_jobs(
+        self,
+        *,
+        limit: int = 50,
+        status: JobStatus | str | None = None,
+    ) -> list[CorrectionJobRecord]:
+        """Return recent jobs without their input file rows.
+
+        File metadata is intentionally omitted from list responses; job detail
+        includes it. This keeps the list query to one statement.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValidationError("limit must be an integer between 1 and 200.")
+        params: list[Any] = []
+        where = ""
+        if status is not None:
+            where = " WHERE status = ?"
+            params.append(_job_status(status).value)
+        params.append(limit)
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM correction_jobs" + where + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [_job_from_row(row) for row in rows]
+
+    def mark_correction_job_processing(self, job_id: str) -> CorrectionJobRecord:
+        """Atomically move a queued job to ``processing``.
+
+        A job already processing is returned unchanged (idempotent claim); a
+        terminal job is never reopened.
+        """
+        now = utc_now()
+        with self.database.transaction() as conn:
+            row = _fetch_job(conn, job_id)
+            if row is None:
+                raise NotFoundError("Correction job not found.")
+            current = _job_from_row(row)
+            if current.status is JobStatus.PROCESSING:
+                files = _fetch_job_files(conn, job_id)
+                return _job_from_row(row, files)
+            if current.status is not JobStatus.QUEUED:
+                raise ConflictError(
+                    f"A {current.status.value} correction job cannot start processing."
+                )
+            conn.execute(
+                """
+                UPDATE correction_jobs
+                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?
+                WHERE id = ?
+                """,
+                (JobStatus.PROCESSING.value, now, now, job_id),
+            )
+            updated = _fetch_job(conn, job_id)
+            files = _fetch_job_files(conn, job_id)
+        if updated is None:  # pragma: no cover - defensive
+            raise StorageError("Correction job was not updated.")
+        return _job_from_row(updated, files)
+
+    def complete_correction_job(
+        self, job_id: str, report: CorrectionReport
+    ) -> CorrectionJobRecord:
+        """Persist every question row and mark the job completed atomically.
+
+        The job status is updated in the same transaction that inserts the
+        items, so a completed job cannot exist without its results. A repeated
+        completion is idempotent; a failed job is never overwritten.
+        """
+        _validate_report_for_storage(report, job_id)
+        now = utc_now()
+        with self.database.transaction() as conn:
+            row = _fetch_job(conn, job_id)
+            if row is None:
+                raise NotFoundError("Correction job not found.")
+            current = _job_from_row(row)
+            if current.status is JobStatus.COMPLETED:
+                files = _fetch_job_files(conn, job_id)
+                return _job_from_row(row, files)
+            if current.status is not JobStatus.PROCESSING:
+                raise ConflictError(
+                    f"A {current.status.value} correction job cannot be completed."
+                )
+
+            for position, item in enumerate(report.items):
+                conn.execute(
+                    """
+                    INSERT INTO correction_items(
+                        job_id, position, label, awarded, out_of, feedback,
+                        criteria_json, student_evidence, scheme_evidence,
+                        verification, student_answer, scheme_answer, status,
+                        warnings_json, review_flags_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        position,
+                        item.label,
+                        item.awarded,
+                        item.out_of,
+                        item.feedback,
+                        _json_text(item.criteria),
+                        item.student_evidence,
+                        item.scheme_evidence,
+                        item.verification,
+                        item.student_answer,
+                        item.scheme_answer,
+                        item.status,
+                        _json_text(item.warnings),
+                        _json_text(item.review_flags),
+                    ),
+                )
+            conn.execute(
+                """
+                UPDATE correction_jobs
+                SET status = ?, engine = ?, summary = ?, awarded = ?, out_of = ?,
+                    percentage = ?, report_status = ?, review_required = ?,
+                    warnings_json = ?, completed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    JobStatus.COMPLETED.value,
+                    report.engine,
+                    report.summary,
+                    report.awarded,
+                    report.out_of,
+                    report.percentage,
+                    report.status,
+                    1 if report.review_required else 0,
+                    _json_text(report.warnings),
+                    now,
+                    now,
+                    job_id,
+                ),
+            )
+            updated = _fetch_job(conn, job_id)
+            files = _fetch_job_files(conn, job_id)
+        if updated is None:  # pragma: no cover - defensive
+            raise StorageError("Correction job was not completed.")
+        return _job_from_row(updated, files)
+
+    def fail_correction_job(
+        self, job_id: str, error: str, *, completed_at: str | None = None
+    ) -> CorrectionJobRecord:
+        """Record a safe failure without ever replacing a completed result."""
+        clean_error = _optional_text(error, "error") or "The correction failed."
+        now = _timestamp(completed_at, "completed_at") if completed_at else utc_now()
+        with self.database.transaction() as conn:
+            row = _fetch_job(conn, job_id)
+            if row is None:
+                raise NotFoundError("Correction job not found.")
+            current = _job_from_row(row)
+            if current.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+                files = _fetch_job_files(conn, job_id)
+                return _job_from_row(row, files)
+            conn.execute(
+                """
+                UPDATE correction_jobs
+                SET status = ?, error = ?, completed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (JobStatus.FAILED.value, clean_error, now, now, job_id),
+            )
+            updated = _fetch_job(conn, job_id)
+            files = _fetch_job_files(conn, job_id)
+        if updated is None:  # pragma: no cover - defensive
+            raise StorageError("Correction job was not updated.")
+        return _job_from_row(updated, files)
+
+    def recover_interrupted_correction_jobs(
+        self, error: str = "Processing was interrupted by an application restart."
+    ) -> list[str]:
+        """Mark leftover queued/processing jobs failed; return their ids."""
+        clean_error = _optional_text(error, "error") or "Correction was interrupted."
+        now = utc_now()
+        with self.database.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id FROM correction_jobs WHERE status IN (?, ?)",
+                (JobStatus.QUEUED.value, JobStatus.PROCESSING.value),
+            ).fetchall()
+            job_ids = [str(row["id"]) for row in rows]
+            if job_ids:
+                conn.execute(
+                    """
+                    UPDATE correction_jobs
+                    SET status = ?, error = ?, completed_at = ?, updated_at = ?
+                    WHERE status IN (?, ?)
+                    """,
+                    (
+                        JobStatus.FAILED.value,
+                        clean_error,
+                        now,
+                        now,
+                        JobStatus.QUEUED.value,
+                        JobStatus.PROCESSING.value,
+                    ),
+                )
+        return job_ids
+
+    def get_correction_report(self, job_id: str) -> CorrectionReport | None:
+        """Reconstruct a report from persisted rows (no engine call)."""
+        job = self.get_correction_job(job_id)
+        if job is None:
+            raise NotFoundError("Correction job not found.")
+        if job.status is not JobStatus.COMPLETED or job.report_status is None:
+            return None
+        with self.database.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM correction_items WHERE job_id = ? ORDER BY position",
+                (job_id,),
+            ).fetchall()
+        if not rows:
+            raise StorageError("The stored correction has no question results.")
+        items = tuple(_item_from_row(row) for row in rows)
+        return CorrectionReport(
+            job_id=job.job_id,
+            summary=job.summary,
+            awarded=job.awarded,
+            out_of=job.out_of,
+            items=items,
+            status=job.report_status,
+            percentage=job.percentage,
+            review_required=job.review_required,
+            unresolved=tuple(item.label for item in items if item.status != QUESTION_MARKED),
+            warnings=job.warnings,
+            engine=job.engine,
+            created_at=job.created_at,
+        )
+
     # --- Status and statistics -------------------------------------------
 
     def database_status(self) -> DatabaseStatus:
@@ -682,6 +1437,63 @@ def _correction_from_row(row: sqlite3.Row) -> CorrectionResult:
     )
 
 
+def _job_from_row(
+    row: sqlite3.Row, files: Sequence[sqlite3.Row] = ()
+) -> CorrectionJobRecord:
+    return CorrectionJobRecord(
+        job_id=str(row["id"]),
+        status=JobStatus(str(row["status"])),
+        assignment_title=str(row["assignment_title"]),
+        instructions=str(row["instructions"]),
+        mark_scheme_text=str(row["mark_scheme_text"]),
+        feedback_detail=str(row["feedback_detail"]),
+        max_score=float(row["max_score"]) if row["max_score"] is not None else None,
+        partial_credit=bool(int(row["partial_credit"])),
+        summary=str(row["summary"]),
+        awarded=float(row["awarded"]) if row["awarded"] is not None else None,
+        out_of=float(row["out_of"]) if row["out_of"] is not None else None,
+        percentage=float(row["percentage"]) if row["percentage"] is not None else None,
+        report_status=row["report_status"],
+        review_required=bool(int(row["review_required"])),
+        warnings=_json_list(row["warnings_json"], "warnings"),
+        error=row["error"],
+        engine=str(row["engine"]),
+        created_at=str(row["created_at"]),
+        started_at=row["started_at"],
+        completed_at=row["completed_at"],
+        updated_at=str(row["updated_at"]),
+        files=tuple(_job_file_from_row(file) for file in files),
+    )
+
+
+def _job_file_from_row(row: sqlite3.Row) -> CorrectionJobFile:
+    return CorrectionJobFile(
+        role=str(row["role"]),
+        position=int(row["position"]),
+        filename=str(row["filename"]),
+        media_type=str(row["media_type"]),
+        size_bytes=int(row["size_bytes"]),
+    )
+
+
+def _item_from_row(row: sqlite3.Row) -> MarkedItem:
+    return MarkedItem(
+        label=str(row["label"]),
+        awarded=float(row["awarded"]) if row["awarded"] is not None else None,
+        out_of=float(row["out_of"]) if row["out_of"] is not None else None,
+        feedback=str(row["feedback"]),
+        criteria=_json_list(row["criteria_json"], "criteria"),
+        student_evidence=str(row["student_evidence"]),
+        scheme_evidence=str(row["scheme_evidence"]),
+        verification=str(row["verification"]),
+        student_answer=str(row["student_answer"]),
+        scheme_answer=str(row["scheme_answer"]),
+        status=str(row["status"]),
+        warnings=_json_list(row["warnings_json"], "warnings"),
+        review_flags=_json_list(row["review_flags_json"], "review_flags"),
+    )
+
+
 # --- Lookup helpers -----------------------------------------------------------
 
 def _fetch_student(conn: sqlite3.Connection, student_id: str) -> sqlite3.Row | None:
@@ -727,6 +1539,25 @@ def _fetch_correction_for_submission(
     return conn.execute(
         "SELECT * FROM correction_results WHERE submission_id = ?", (submission_id,)
     ).fetchone()
+
+
+def _fetch_job(conn: sqlite3.Connection, job_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM correction_jobs WHERE id = ?", (job_id,)
+    ).fetchone()
+
+
+def _fetch_job_files(
+    conn: sqlite3.Connection, job_id: str
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT * FROM correction_job_files
+        WHERE job_id = ?
+        ORDER BY role, position
+        """,
+        (job_id,),
+    ).fetchall()
 
 
 def _count(conn: sqlite3.Connection, table: str) -> int:
@@ -825,6 +1656,139 @@ def _correction_outcome(value: Any) -> CorrectionOutcome:
     except (TypeError, ValueError) as exc:
         allowed = ", ".join(item.value for item in CorrectionOutcome)
         raise ValidationError(f"outcome must be one of: {allowed}.") from exc
+
+
+def _job_status(value: Any) -> JobStatus:
+    try:
+        return JobStatus(value)
+    except (TypeError, ValueError) as exc:
+        allowed = ", ".join(item.value for item in JobStatus)
+        raise ValidationError(f"status must be one of: {allowed}.") from exc
+
+
+def _feedback_detail(value: Any) -> str:
+    text = _required_text(value, "feedback_detail")
+    if text not in ("brief", "detailed"):
+        raise ValidationError("feedback_detail must be 'brief' or 'detailed'.")
+    return text
+
+
+def _job_file(value: Any) -> CorrectionJobFile:
+    if not isinstance(value, CorrectionJobFile):
+        raise ValidationError("files must be CorrectionJobFile records.")
+    role = _required_text(value.role, "role")
+    if role not in ("submission", "mark_scheme"):
+        raise ValidationError("role must be 'submission' or 'mark_scheme'.")
+    position = _optional_int(value.position, "position")
+    if position is None or position < 0:
+        raise ValidationError("position must be a non-negative integer.")
+    filename = _required_text(value.filename, "filename")
+    media_type = _required_text(value.media_type, "media_type")
+    if media_type not in ACCEPTED_MEDIA_TYPES:
+        raise ValidationError("media_type is not supported.")
+    size_bytes = _optional_int(value.size_bytes, "size_bytes")
+    if size_bytes is None or size_bytes <= 0:
+        raise ValidationError("size_bytes must be positive.")
+    return CorrectionJobFile(
+        role=role,
+        position=position,
+        filename=filename,
+        media_type=media_type,
+        size_bytes=size_bytes,
+    )
+
+
+def _json_text(values: Sequence[str]) -> str:
+    return json.dumps(list(values), ensure_ascii=False)
+
+
+def _json_list(raw: Any, field: str) -> tuple[str, ...]:
+    try:
+        value = json.loads(str(raw))
+    except (TypeError, ValueError) as exc:
+        raise StorageError(f"Stored {field} data is unreadable.") from exc
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise StorageError(f"Stored {field} data is unreadable.")
+    return tuple(value)
+
+
+def _validate_report_for_storage(report: CorrectionReport, job_id: str) -> None:
+    """Re-check the engine's report invariants at the persistence boundary."""
+    if not isinstance(report, CorrectionReport):
+        raise StorageError("The engine did not return a correction report.")
+    if report.job_id != job_id:
+        raise StorageError("The engine report does not belong to this job.")
+    if report.status not in (REPORT_COMPLETED, REPORT_PARTIAL):
+        raise StorageError("The engine report has an unknown status.")
+    if not report.items:
+        raise StorageError("The engine report contains no question results.")
+
+    labels: set[str] = set()
+    awarded_values: list[float] = []
+    maxima: list[float] = []
+    all_maxima_known = True
+    for item in report.items:
+        if item.label in labels:
+            raise StorageError("The engine report contains duplicate question labels.")
+        labels.add(item.label)
+        if item.status not in QUESTION_STATUSES:
+            raise StorageError("The engine report contains an unknown question status.")
+        if item.awarded is not None:
+            if not is_finite_number(item.awarded) or item.awarded < 0:
+                raise StorageError("The engine report contains an invalid mark.")
+            awarded_values.append(float(item.awarded))
+        if item.out_of is not None:
+            if not is_finite_number(item.out_of) or item.out_of < 0:
+                raise StorageError("The engine report contains an invalid maximum.")
+            maxima.append(float(item.out_of))
+        else:
+            all_maxima_known = False
+        if item.awarded is not None and item.out_of is not None and item.awarded > item.out_of:
+            raise StorageError("The engine report awards more than a question maximum.")
+        if item.status == QUESTION_MARKED and item.awarded is None:
+            raise StorageError("A resolved question has no mark.")
+        if item.status != QUESTION_MARKED and item.awarded is not None:
+            raise StorageError("An unresolved question carries a mark.")
+
+    expected_awarded = float(sum(awarded_values)) if awarded_values else None
+    if not _same_total(report.awarded, expected_awarded):
+        raise StorageError("The engine report total does not match its question results.")
+    expected_out_of = float(sum(maxima)) if all_maxima_known else None
+    if not _same_total(report.out_of, expected_out_of):
+        raise StorageError("The engine report maximum does not match its question results.")
+
+    expected_unresolved = tuple(
+        item.label for item in report.items if item.status != QUESTION_MARKED
+    )
+    if set(report.unresolved) != set(expected_unresolved):
+        raise StorageError("The engine report's unresolved list is inconsistent.")
+
+    if report.status == REPORT_COMPLETED:
+        if (
+            expected_unresolved
+            or not all_maxima_known
+            or expected_awarded is None
+            or report.percentage is None
+        ):
+            raise StorageError("A completed report is incomplete.")
+    elif report.percentage is not None:
+        raise StorageError("A partial report must not carry a percentage.")
+
+    if report.percentage is not None:
+        if not is_finite_number(report.percentage) or not 0 <= report.percentage <= 100:
+            raise StorageError("The engine report contains an invalid percentage.")
+        if report.status == REPORT_COMPLETED and report.out_of and report.out_of > 0:
+            expected_percentage = round((report.awarded or 0.0) / report.out_of * 100.0, 2)
+            if abs(report.percentage - expected_percentage) > 1e-9:
+                raise StorageError("The engine report percentage is inconsistent.")
+
+
+def _same_total(value: float | None, expected: float | None) -> bool:
+    if value is None or expected is None:
+        return value is None and expected is None
+    if not is_finite_number(value):
+        return False
+    return abs(float(value) - expected) <= 1e-9
 
 
 def _submitted_at_for(

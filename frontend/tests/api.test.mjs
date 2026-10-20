@@ -140,6 +140,77 @@ test("network failures produce a user-safe message", async () => {
   );
 });
 
+test("correction submission posts multipart data with an idempotency key", async () => {
+  const calls = [];
+  const formData = new FormData();
+  formData.append("files", new Blob(["%PDF-1.7"]), "work.pdf");
+  formData.append("assignment_title", "Chapter 4");
+
+  await withFetch(
+    async (path, init) => {
+      calls.push({ path, init });
+      return jsonResponse({ job_id: "job-123", status: "queued" }, 202);
+    },
+    async () => {
+      const payload = await api.corrections.submit(formData, {
+        idempotencyKey: "browser-request-0001",
+      });
+      assert.equal(payload.job_id, "job-123");
+    },
+  );
+
+  assert.equal(calls[0].path, "/api/corrections");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.body, formData);
+  assert.equal(calls[0].init.headers["Idempotency-Key"], "browser-request-0001");
+  assert.equal(calls[0].init.headers["Content-Type"], undefined);
+  assert.equal(calls[0].init.headers.Accept, "application/json");
+});
+
+test("correction list, status and report calls use the expected endpoints", async () => {
+  const calls = [];
+  await withFetch(
+    async (path, init) => {
+      calls.push({ path, init });
+      return jsonResponse({ jobs: [] });
+    },
+    async () => {
+      await api.corrections.list({ limit: 5 });
+      await api.corrections.get("job/with space");
+      await api.corrections.report("job-123");
+    },
+  );
+
+  assert.equal(calls[0].path, "/api/corrections?limit=5");
+  assert.equal(calls[0].init.method, "GET");
+  assert.equal(calls[1].path, "/api/corrections/job%2Fwith%20space");
+  assert.equal(calls[2].path, "/api/corrections/job-123/report");
+  assert.equal(calls[2].init.method, "GET");
+});
+
+test("a not-ready report surfaces the backend message and code", async () => {
+  await withFetch(
+    async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "report_not_ready",
+            message: "The correction has not completed, so no result is available.",
+          },
+        },
+        409,
+      ),
+    async () => {
+      await assert.rejects(() => api.corrections.report("job-queued"), (error) => {
+        assert.equal(error.code, "report_not_ready");
+        assert.equal(error.status, 409);
+        assert.match(error.message, /has not completed/);
+        return true;
+      });
+    },
+  );
+});
+
 test("aborted requests report a timeout", async () => {
   await withFetch(
     async () => {

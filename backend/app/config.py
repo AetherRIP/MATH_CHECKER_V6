@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "Math Checker V6"
-APP_VERSION = "6.2.0"
-APP_PHASE = 3
+APP_VERSION = "6.4.0"
+APP_PHASE = 8
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -66,6 +66,7 @@ class Config:
     log_level: str
     data_dir: Path
     tmp_dir: Path
+    uploads_dir: Path
     database_path: Path
 
 
@@ -111,6 +112,7 @@ def get_config(host: str | None = None, port: int | None = None) -> Config:
         log_level=level,
         data_dir=data_dir,
         tmp_dir=tmp_dir,
+        uploads_dir=data_dir / "uploads",
         # SQLite lives inside the configured data directory so MC6_DATA_DIR
         # remains the single storage override for local and cloud runs.
         database_path=data_dir / "app.db",
@@ -120,7 +122,13 @@ def get_config(host: str | None = None, port: int | None = None) -> Config:
 def ensure_dirs() -> Config:
     """Create the runtime data directories if missing. Idempotent."""
     cfg = get_config()
-    for directory in (cfg.data_dir, cfg.tmp_dir, cfg.data_dir / "reports", cfg.data_dir / "cache"):
+    for directory in (
+        cfg.data_dir,
+        cfg.tmp_dir,
+        cfg.uploads_dir,
+        cfg.data_dir / "reports",
+        cfg.data_dir / "cache",
+    ):
         directory.mkdir(parents=True, exist_ok=True)
     return cfg
 
@@ -152,7 +160,7 @@ def get_ai_config() -> AIConfig | None:
     if not api_key:
         return None
 
-    model = os.environ.get("MC6_AI_MODEL", "").strip() or "gemini-2.5-flash"
+    model = os.environ.get("MC6_AI_MODEL", "").strip() or "gemini-3.5-flash-lite"
     base_url = (
         os.environ.get("MC6_AI_BASE_URL", "").strip()
         or "https://generativelanguage.googleapis.com"
@@ -185,6 +193,59 @@ def get_ai_config() -> AIConfig | None:
     )
 
 
+def classroom_oauth_client_path() -> Path | None:
+    """Resolve the Google OAuth client JSON path, or None when absent.
+
+    Sources, in order:
+    1. ``MC6_GOOGLE_OAUTH_CLIENT`` — an explicit path (or inline ``{...}``
+       JSON, which is written to the secrets directory; the value is never
+       logged or echoed).
+    2. ``<data_dir>/secrets/google_oauth_client.json`` — the V5 convention,
+       so an existing V5 credentials file can be dropped into V6's data
+       directory without any code change.
+
+    The file itself must contain an ``installed`` or ``web`` client object
+    (the Google "client secret" JSON). The refresh token lives in the local
+    store, never inside this file.
+    """
+    explicit = os.environ.get("MC6_GOOGLE_OAUTH_CLIENT", "").strip()
+    if explicit:
+        if explicit.startswith("{"):
+            destination = get_config().data_dir / "secrets" / "google_oauth_client.json"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(explicit, encoding="utf-8")
+            return destination
+        return Path(explicit).expanduser()
+    return get_config().data_dir / "secrets" / "google_oauth_client.json"
+
+
+def classroom_client_configured() -> bool:
+    """True when a usable Google OAuth client JSON exists on disk."""
+    path = classroom_oauth_client_path()
+    try:
+        if path is None or not path.is_file() or path.stat().st_size == 0:
+            return False
+        import json
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("installed") or payload.get("web"))
+
+
+def classroom_refresh_token_path() -> Path:
+    """Local file holding the OAuth refresh token (never committed, never logged)."""
+    return get_config().data_dir / "secrets" / "classroom_refresh_token"
+
+
 def classroom_configured() -> bool:
-    """True when Google Classroom OAuth material is configured (later phase)."""
-    return bool(os.environ.get("MC6_GOOGLE_OAUTH_CLIENT", "").strip())
+    """True when the OAuth client JSON AND a stored refresh token both exist."""
+    if not classroom_client_configured():
+        return False
+    refresh_path = classroom_refresh_token_path()
+    try:
+        return bool(refresh_path.read_text(encoding="utf-8").strip())
+    except OSError:
+        return False

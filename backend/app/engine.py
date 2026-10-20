@@ -118,6 +118,9 @@ class CorrectionRequest:
     assignment: AssignmentContext
     options: CorrectionOptions = field(default_factory=CorrectionOptions)
     mark_scheme_files: tuple[SubmissionFile, ...] = ()
+    # Phase 4 supplies the durable job id so the engine's report is keyed to
+    # the same record the API created. Standalone engine callers may omit it.
+    job_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -310,7 +313,8 @@ class UnavailableEngine:
 
     def __init__(self, reason: str | None = None):
         self._reason = reason or (
-            "No AI provider is configured. Set MC6_AI_API_KEY to enable correction."
+            "No AI provider is configured. Configure an AI API key on the server "
+            "to enable correction."
         )
 
     def describe(self) -> EngineInfo:

@@ -17,12 +17,12 @@ def test_status_shape_and_honest_feature_flags(client):
     data = response.json()
 
     assert data["app_name"] == "Math Checker V6"
-    assert data["version"] == "6.2.0"
-    assert data["phase"] == 3
+    assert data["version"] == "6.4.0"
+    assert data["phase"] == 8
 
     assert data["database"] == {
         "status": "ready",
-        "schema_version": 1,
+        "schema_version": 3,
         "detail": None,
     }
 
@@ -37,34 +37,61 @@ def test_status_shape_and_honest_feature_flags(client):
     assert features["pdf_processing"] is True
     assert features["ai_correction"] is False
     assert features["grade_submission"] is False
-    # Report files and the Phase 4 job lifecycle are not implemented.
+    # The durable job lifecycle is implemented; downloadable report files are
+    # still deferred, and classroom sync belongs to a later phase.
     assert features["reports"] is False
     assert features["classroom_sync"] is False
-    assert features["background_tasks"] is False
+    assert features["correction_jobs"] is True
+    assert features["background_tasks"] is True
 
     engine = data["correction_engine"]
     assert engine == {
         "name": "unavailable",
         "available": False,
-        "reason": "No AI provider is configured. Set MC6_AI_API_KEY to enable correction.",
+        "reason": (
+            "No AI provider is configured. Configure an AI API key on the "
+            "server to enable correction."
+        ),
     }
 
 
-def test_status_reflects_real_configuration(client, monkeypatch):
+def test_status_reflects_startup_provider_configuration(client, monkeypatch):
     assert client.get("/api/system/status").json()["ai_provider_configured"] is False
     assert client.get("/api/system/status").json()["classroom_configured"] is False
 
     monkeypatch.setenv("MC6_AI_API_KEY", "fake-key-for-test")
-    monkeypatch.setenv("MC6_GOOGLE_OAUTH_CLIENT", "/some/path.json")
+    client.get("/api/system/status")
+    # A materialised OAuth client file must exist for the classroom flag.
+    from app.config import get_config, classroom_client_configured
+
+    secrets_dir = get_config().data_dir / "secrets"
+    secrets_dir.mkdir(parents=True, exist_ok=True)
+    (secrets_dir / "google_oauth_client.json").write_text(
+        '{"installed":{"client_id":"cid","client_secret":"sec"}}',
+        encoding="utf-8",
+    )
     data = client.get("/api/system/status").json()
+    # Environment flags are live, but the correction engine and its job
+    # service are constructed once at startup so a running job cannot be
+    # handed to a second registry. A newly configured key needs a restart.
     assert data["ai_provider_configured"] is True
-    assert data["classroom_configured"] is True
-    assert data["features"]["ai_correction"] is True
-    assert data["features"]["grade_submission"] is True
-    assert data["correction_engine"]["available"] is True
-    assert data["correction_engine"]["name"] == "gemini:gemini-2.5-flash"
-    assert data["correction_engine"]["reason"] is None
+    assert classroom_client_configured() is True
+    assert data["features"]["ai_correction"] is False
+    assert data["correction_engine"]["available"] is False
     assert "fake-key-for-test" not in client.get("/api/system/status").text
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as restarted:
+        configured = restarted.get("/api/system/status").json()
+        assert configured["features"]["ai_correction"] is True
+        assert configured["features"]["grade_submission"] is True
+        assert configured["correction_engine"]["available"] is True
+        assert configured["correction_engine"]["name"] == "gemini:gemini-3.5-flash-lite"
+        assert configured["correction_engine"]["reason"] is None
+        assert "fake-key-for-test" not in restarted.get("/api/system/status").text
 
 
 def test_status_never_leaks_secrets_paths_or_env_names(client, monkeypatch, tmp_path):

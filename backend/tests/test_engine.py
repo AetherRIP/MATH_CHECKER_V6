@@ -9,6 +9,7 @@ documented limits match the code.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def test_get_engine_without_a_key_is_honestly_unavailable() -> None:
     info = engine.describe()
     assert isinstance(info, EngineInfo)
     assert info.available is False
-    assert "MC6_AI_API_KEY" in (info.reason or "")
+    assert "API key" in (info.reason or "")
 
 
 def test_a_configured_key_builds_the_real_engine_without_calling_it(monkeypatch) -> None:
@@ -74,14 +75,19 @@ def test_a_configured_key_builds_the_real_engine_without_calling_it(monkeypatch)
         assert callable(getattr(engine, method))
 
 
-def test_invalid_provider_configuration_is_reported_not_crashed(monkeypatch) -> None:
+def test_invalid_provider_configuration_is_reported_not_crashed(monkeypatch, caplog) -> None:
     monkeypatch.setenv("MC6_AI_API_KEY", "test-key")
     monkeypatch.setenv("MC6_AI_TIMEOUT_SECONDS", "soon")
-    engine = get_engine()
+    with caplog.at_level(logging.ERROR, logger="mathchecker"):
+        engine = get_engine()
     info = engine.describe()
     assert info.available is False
-    assert "MC6_AI_TIMEOUT_SECONDS" in (info.reason or "")
+    assert "configuration is invalid" in (info.reason or "")
     assert "test-key" not in (info.reason or "")
+    assert "MC6_" not in (info.reason or "")
+    # Operators get the variable name in the log; the key value never appears.
+    assert "MC6_AI_TIMEOUT_SECONDS" in caplog.text
+    assert "test-key" not in caplog.text
 
 
 def test_unavailable_engine_refuses_instead_of_inventing_results(tmp_path: Path) -> None:
@@ -97,7 +103,8 @@ def test_unavailable_messages_are_user_safe() -> None:
     with pytest.raises(EngineUnavailableError) as excinfo:
         asyncio.run(UnavailableEngine().get_job("x"))
     message = str(excinfo.value)
-    assert "MC6_AI_API_KEY" in message
+    assert "API key" in message
+    assert "MC6_" not in message
     assert "/" not in message and "\\" not in message  # no filesystem paths
 
 

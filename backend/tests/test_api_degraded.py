@@ -66,3 +66,11 @@ def test_database_failure_after_startup_returns_safe_503(client):
     assert body["error"]["message"]
     assert body["error"]["request_id"]
     assert "correction_results" not in response.text
+
+    # A live engine and a constructed job service are not enough: without a
+    # ready database, correction readiness and job infrastructure are false.
+    status = client.get("/api/system/status").json()
+    assert status["database"]["status"] == "unavailable"
+    assert status["features"]["ai_correction"] is False
+    assert status["features"]["correction_jobs"] is False
+    assert status["features"]["background_tasks"] is False

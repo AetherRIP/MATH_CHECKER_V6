@@ -376,4 +376,4 @@ def test_stats_count_every_submission_state_and_outcome(storage):
     assert stats.correction_results == 2
     assert stats.completed_results == 1
     assert stats.failed_results == 1
-    assert stats.schema_version == 1
+    assert stats.schema_version == 3

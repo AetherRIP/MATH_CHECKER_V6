@@ -42,7 +42,14 @@ def system_status(request: Request) -> dict:
     else:
         database = storage.database_status()
 
-    engine_info = get_engine().describe()
+    engine = getattr(request.app.state, "engine", None) or get_engine()
+    engine_info = engine.describe()
+    jobs = getattr(request.app.state, "jobs", None)
+    # Readiness requires all three pieces, not merely a constructed service: a
+    # broken database cannot durably queue or persist a correction.
+    jobs_ready = bool(
+        engine_info.available and jobs is not None and database.ready
+    )
 
     return {
         "app_name": APP_NAME,
@@ -68,11 +75,12 @@ def system_status(request: Request) -> dict:
             "settings": True,
             # The engine capability is reported from the live engine, not from
             # a hard-coded promise: no provider key means no correction.
-            "ai_correction": engine_info.available,
+            "ai_correction": jobs_ready,
             "pdf_processing": True,
-            "grade_submission": engine_info.available,
+            "grade_submission": jobs_ready,
+            "correction_jobs": jobs is not None and database.ready,
             "reports": False,
             "classroom_sync": False,
-            "background_tasks": False,
+            "background_tasks": jobs is not None and database.ready,
         },
     }

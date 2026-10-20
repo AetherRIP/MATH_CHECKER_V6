@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Mapping
 
+from .engine import JobStatus
+
 
 class SubmissionStatus(str, Enum):
     """Lifecycle of one student's work for one assignment."""
@@ -88,6 +90,51 @@ class CorrectionResult:
     error: str | None
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class CorrectionJobFile:
+    """Metadata for one uploaded input. The server-side path is never stored."""
+
+    role: str  # "submission" | "mark_scheme"
+    position: int
+    filename: str
+    media_type: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class CorrectionJobRecord:
+    """Durable state of one correction job.
+
+    ``mark_scheme_text`` is retained only so a queued/processing job can be
+    run after a restart; HTTP responses never include it. ``files`` are
+    metadata only. A completed job has ``report_status`` and per-question
+    rows; a failed job has an error and no report.
+    """
+
+    job_id: str
+    status: JobStatus
+    assignment_title: str
+    instructions: str
+    mark_scheme_text: str
+    feedback_detail: str
+    max_score: float | None
+    partial_credit: bool
+    summary: str
+    awarded: float | None
+    out_of: float | None
+    percentage: float | None
+    report_status: str | None
+    review_required: bool
+    warnings: tuple[str, ...]
+    error: str | None
+    engine: str
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    updated_at: str
+    files: tuple[CorrectionJobFile, ...] = ()
 
 
 @dataclass(frozen=True)

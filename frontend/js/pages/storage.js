@@ -8,13 +8,31 @@
 import { html, render as toHTML } from "../ui/html.js";
 import { pageHeader, card, statCard } from "../ui/card.js";
 import { button } from "../ui/button.js";
-import { badge } from "../ui/badge.js";
 import { dataTable } from "../ui/table.js";
 import { emptyState, errorState, loadingState } from "../ui/states.js";
 import { api } from "../api.js";
 import { formatBytes, formatCount } from "../format.js";
 
-function summaryHTML(summary) {
+const CATEGORY_TONES = ["accent", "info", "success", "warning", "error"];
+
+/** Measurement bar row for one storage category. */
+function meterRow(category, index) {
+  const share = summary => {
+    const grand = summary.total?.bytes || 0;
+    return grand > 0 ? Math.max(4, Math.round((category.bytes / grand) * 100)) : 0;
+  };
+  const tone = CATEGORY_TONES[index % CATEGORY_TONES.length];
+  return html`<div class="ledger__row">
+    <span class="ledger__label">${category.label}</span>
+    <span class="meter">
+      <span class="meter__bar"><span class="meter__fill" style="width:${share(category)}%"></span></span>
+      <span class="meter__value" data-tone="${tone}">${formatBytes(category.bytes)}</span>
+    </span>
+    <span class="ledger__end num">${formatCount(category.files)} files</span>
+  </div>`;
+}
+
+export function summaryHTML(summary) {
   const categoriesWithData = summary.categories.filter(
     (category) => category.files > 0 || category.bytes > 0,
   ).length;
@@ -22,20 +40,17 @@ function summaryHTML(summary) {
   return html`
     <div class="stat-grid">
       ${statCard({
-        iconName: "storage",
         label: "Total stored",
         value: formatBytes(summary.total.bytes),
         hint: "Across the application data directory",
       })}
       ${statCard({
-        iconName: "file",
         label: "Files",
         value: formatCount(summary.total.files),
         hint: "Counted on request",
         tone: "info",
       })}
       ${statCard({
-        iconName: "tasks",
         label: "Categories in use",
         value: `${categoriesWithData} of ${summary.categories.length}`,
         hint: "Storage categories containing data",
@@ -44,10 +59,15 @@ function summaryHTML(summary) {
     </div>
 
     ${summary.truncated
-      ? html`<p class="field__note">${badge({ label: "Truncated", tone: "warning" })}<span>The scan stopped at its safety limit; figures are a lower bound.</span></p>`
+      ? html`<p class="field__note">Scan truncated — the safety limit stopped the walk; figures are a lower bound.</p>`
       : ""}
 
-    <div class="mt-4">
+    <p class="section-label mt-4 mb-2">Per-category measurements</p>
+    <div class="ledger">
+      ${summary.categories.map((category, index) => meterRow(category, index))}
+    </div>
+
+    <div class="mt-5">
       ${dataTable({
         caption: "Measurements cover the application data directory only and are computed when this page is opened or refreshed.",
         columns: [
@@ -74,7 +94,7 @@ function summaryHTML(summary) {
             iconName: "storage",
             title: "No stored data yet",
             description:
-              "Files and reports appear here as they are created by later phases. The application has not stored anything so far.",
+              "Files appear here as they are created. Correction uploads are temporary and disappear when their job finishes.",
           })}
         </div>`
       : ""}
@@ -103,6 +123,7 @@ async function load(root) {
 export function render() {
   return html`
     ${pageHeader({
+      eyebrow: "Data",
       title: "Storage",
       description:
         "Local application data and files. Measurements are real and computed on request — nothing is scanned in the background.",
@@ -110,6 +131,7 @@ export function render() {
     })}
     ${card({
       title: "Storage overview",
+      description: "Category ledger, computed live from the bounded walk.",
       body: html`<div data-section="storage">${loadingState({ label: "Measuring application storage…" })}</div>`,
     })}
   `;

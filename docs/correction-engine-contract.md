@@ -1,12 +1,10 @@
-# Correction-engine contract (Phase 3)
+# Correction-engine contract (Phase 3, integrated in Phase 4)
 
-**Status: implemented.** The engine lives in `backend/app/correction/` and is
-reachable through `backend/app/engine.py`'s `CorrectionEngine` protocol and
-`get_engine()` construction point.
-
-Phase 3 delivers the correction component only. It does **not** add the
-durable correction-job lifecycle, upload endpoints, or frontend wiring; those
-are Phase 4 work against the same interface.
+**Status: implemented and integrated.** The engine lives in
+`backend/app/correction/` and is reachable through `backend/app/engine.py`'s
+`CorrectionEngine` protocol and `get_engine()` construction point. Phase 4
+adds the durable job service, upload endpoints and frontend wiring around this
+unchanged interface; see `phase-4-report.md`.
 
 ---
 
@@ -31,10 +29,10 @@ provider.
 
 Phase 3 runs one correction per `submit()` call and reports the terminal
 `completed` / `failed` state. `queued` and `processing` are defined in
-`JobStatus` for the durable lifecycle but are not produced here. The job and
-report registries are process-local and are lost on restart by design — Phase
-4 owns persistence and the `queued → processing → completed | failed`
-transitions.
+`JobStatus` for the durable lifecycle but are not produced by the engine. The
+job and report registries are process-local and are lost on restart by design.
+Phase 4 owns persistence, supplies `CorrectionRequest.job_id`, and writes the
+`queued → processing → completed | failed` transitions around the engine call.
 
 ## 2. Input contract
 
@@ -45,7 +43,7 @@ transitions.
 | `SubmissionFile` | `path` (server-only), `filename`, `media_type`, `size_bytes` |
 | `AssignmentContext` | `title`, `instructions`, `mark_scheme` (pasted text) |
 | `CorrectionOptions` | `partial_credit`, `max_score`, `feedback_detail` |
-| `CorrectionRequest` | `files`, `assignment`, `options`, `mark_scheme_files` (added in Phase 3) |
+| `CorrectionRequest` | `files`, `assignment`, `options`, `mark_scheme_files`, `job_id` (optional; supplied by Phase 4) |
 
 `validate_request()` is the single input-policy owner:
 
@@ -185,7 +183,7 @@ Environment (`MC6_*`, server-side only):
 | Variable | Default | Purpose |
 |---|---|---|
 | `MC6_AI_API_KEY` | — | enables the engine (required) |
-| `MC6_AI_MODEL` | `gemini-2.5-flash` | model name |
+| `MC6_AI_MODEL` | `gemini-3.5-flash-lite` | model name |
 | `MC6_AI_BASE_URL` | `https://generativelanguage.googleapis.com` | endpoint |
 | `MC6_AI_TIMEOUT_SECONDS` | `180` | per-request timeout (5–600) |
 | `MC6_AI_MAX_RETRIES` | `2` | transient retries (0–5) |
@@ -235,26 +233,38 @@ Not deterministic / not verified:
   through the real pipeline with its reference marks; that verifies document
   handling and arithmetic, not model accuracy.
 
-## 7. HTTP surface (Phase 4, not implemented in Phase 3)
+## 7. HTTP surface (implemented in Phase 4)
 
 | Endpoint | Purpose | Success | Notable failures |
 |---|---|---|---|
-| `POST /api/corrections` | multipart submit | `202` + `CorrectionJob` | `422 unsupported_input`, `503 engine_unavailable` |
-| `GET /api/corrections` | recent jobs | `200` + `{jobs: [...]}` | — |
-| `GET /api/corrections/{job_id}` | job state | `200` + `CorrectionJob` | `404 job_not_found` |
-| `GET /api/corrections/{job_id}/report` | report | `200` + `CorrectionReport` | `404 job_not_found`, `409 report_not_ready` |
+| `POST /api/corrections` | multipart submit | `202` + job | `422 unsupported_input`, `503 engine_unavailable`, `503 database_unavailable` |
+| `GET /api/corrections` | recent jobs | `200` + `{jobs: [...]}` | `503 database_unavailable` |
+| `GET /api/corrections/{job_id}` | job state | `200` + job | `404 job_not_found` |
+| `GET /api/corrections/{job_id}/report` | persisted report | `200` + report | `404 job_not_found`, `409 report_not_ready` |
 
-All errors use the existing envelope. This table is the Phase 4 target, not a
-description of routes that exist today.
+All errors use the existing envelope. `POST` accepts multipart fields
+`files`, `mark_scheme_files`, `assignment_title`, `instructions`,
+`mark_scheme`, `feedback_detail`, `max_score`, and an optional
+`Idempotency-Key` header.
 
-## 8. Integrating in Phase 4
+The job payload exposes `job_id`, `status`, timestamps, input file metadata,
+report status, totals, warnings and a safe error. It never exposes server
+paths or pasted mark-scheme text. The report payload exposes question items
+(`label`, `awarded`, `out_of`, `status`, feedback, evidence, criteria,
+verification, warnings, review flags) plus `awarded`, `out_of`, `percentage`,
+`status`, `review_required`, `unresolved`, warnings and engine metadata.
+
+A **completed job** may carry a **partial report**; this is intentional. A
+**failed job** has no report and returns `409 report_not_ready`.
+
+## 8. Integration seam used by Phase 4
 
 ```python
 from app.engine import CorrectionRequest, get_engine
 
-# Construct ONCE at application startup and keep the instance (for example on
-# app.state): the job registry is per engine instance. Calling get_engine()
-# per request would create a fresh registry and lose earlier jobs.
+# Constructed once at application startup and kept on app.state: the job
+# registry is per engine instance. Calling get_engine() per request would
+# create a fresh registry.
 engine = get_engine()
 if not engine.describe().available:
     ...  # show describe().reason; do not offer Start
@@ -264,19 +274,20 @@ if job.status is JobStatus.COMPLETED:
     report = await engine.get_report(job.job_id)
 ```
 
-Phase 4 responsibilities:
+Phase 4 implemented through `app.correction.jobs.CorrectionJobService`:
 
-1. persist jobs, input references and the report (new migration through the
-   existing storage boundary);
-2. run `submit` in a background task/thread and persist `queued`/`processing`
-   transitions; reconcile orphaned jobs after a restart;
+1. persist jobs, input metadata and the report through `Storage` (migration
+   `002`);
+2. run `submit` in a bounded daemon worker and persist
+   `queued`/`processing` transitions; reconcile active jobs after a restart;
 3. persist per-question `MarkedItem` rows and report-level totals exactly as
    returned (no recalculation in the UI);
-4. add the HTTP routes above, mapping `EngineError` subclasses to the error
-   codes in §7;
-5. wire the correction page and Task Manager to the real API;
-6. generate reports from persisted results only, and flip the `reports` flag
-   only when that works end to end.
+4. add the HTTP routes above with safe error mapping;
+5. wire the correction page, dashboard recent jobs and Task Manager guidance to
+   the real API;
+6. leave report-file generation as a documented integration point; it must
+   read persisted results only, and `features.reports` stays false until it
+   works end to end.
 
 ## 9. Non-goals of this contract
 

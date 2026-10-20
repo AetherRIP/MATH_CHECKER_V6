@@ -1,7 +1,9 @@
-/* Dashboard: an honest overview of the correction system.
+/* Dashboard: an operational console for the correction system.
  *
- * Counts come from the local database and readiness comes from the server.
- * Nothing here is sample data; loading, empty and error states are real.
+ * The primary focus is the correction pipeline strip — live queued,
+ * processing, completed and failed counters. Counts come from the local
+ * database and readiness comes from the server. Nothing here is sample data;
+ * loading, empty and error states are real.
  */
 
 import { html, render as toHTML } from "../ui/html.js";
@@ -21,6 +23,13 @@ export function readinessRows(status) {
   const features = status.features || {};
   const engine = status.correction_engine || {};
   const correctionReady = Boolean(features.ai_correction);
+  const correctionLabel = !databaseReady
+    ? "Unavailable (database)"
+    : correctionReady
+      ? "Ready"
+      : engine.reason
+        ? "Unavailable"
+        : "Not configured";
   return [
     {
       label: "Application interface",
@@ -56,14 +65,13 @@ export function readinessRows(status) {
       label: "Correction processing",
       value: correctionReady
         ? badge({ label: "Ready", tone: "success", iconName: "check-circle" })
-        : badge({
-            label: engine.reason ? "Unavailable" : "Not configured",
-            tone: "warning",
-          }),
+        : badge({ label: correctionLabel, tone: "warning" }),
     },
     {
       label: "Background tasks",
-      value: badge({ label: "Planned · later phase", tone: "warning" }),
+      value: Boolean(features.background_tasks)
+        ? badge({ label: "Ready", tone: "success", iconName: "check-circle" })
+        : badge({ label: "Unavailable", tone: "warning" }),
     },
   ];
 }
@@ -102,12 +110,89 @@ export function statsHTML(counts) {
   });
 }
 
+function shortJobId(jobId) {
+  const text = String(jobId || "");
+  return text.length > 12 ? `${text.slice(0, 8)}…` : text;
+}
+
+function jobStatusBadge(status) {
+  const tones = { queued: "info", processing: "info", completed: "success", failed: "error" };
+  const labels = { queued: "Queued", processing: "Processing", completed: "Completed", failed: "Failed" };
+  return badge({ label: labels[status] || status, tone: tones[status] || "neutral" });
+}
+
+/** Pipeline strip: the dashboard's primary operational readout. */
+export function pipelineHTML(counts) {
+  const c = counts || { queued: 0, processing: 0, completed: 0, failed: 0 };
+  const stages = [
+    { id: "queued", label: "Queued", count: c.queued, note: "Waiting for a slot" },
+    { id: "processing", label: "Processing", count: c.processing, note: "Engine marking" },
+    { id: "completed", label: "Completed", count: c.completed, note: "Results persisted" },
+    { id: "failed", label: "Failed", count: c.failed, note: "Needs attention" },
+  ];
+  return html`<div class="pipeline" role="list" aria-label="Correction pipeline by job state">
+    ${stages.map(
+      (stage) => html`<div class="pipeline__stage" role="listitem" data-tone="${stage.id}">
+        <span class="pipeline__stage-label"><span class="pipeline__dot"></span>${stage.label}</span>
+        <span class="pipeline__count">${formatCount(stage.count)}</span>
+        <span class="pipeline__note">${stage.note}</span>
+      </div>`,
+    )}
+  </div>`;
+}
+
+export function jobsHTML(jobs) {
+  return dataTable({
+    columns: [
+      { key: "job", label: "Job" },
+      { key: "assignment", label: "Assignment" },
+      { key: "status", label: "Status" },
+      { key: "created", label: "Created" },
+      { key: "open", label: "" },
+    ],
+    rows: (jobs || []).map((job) => ({
+      key: job.job_id,
+      cells: {
+        job: html`<code title="${job.job_id}">${shortJobId(job.job_id)}</code>`,
+        assignment: job.assignment_title,
+        status: jobStatusBadge(job.status),
+        created: job.created_at ? new Date(job.created_at).toLocaleString() : "—",
+        open: html`<a class="btn btn--ghost" href="#/correction?job=${encodeURIComponent(job.job_id)}">Open</a>`,
+      },
+    })),
+    empty: {
+      iconName: "tasks",
+      title: "No correction jobs yet",
+      description: "Start a correction from the AI Correction page; jobs and their results are stored locally.",
+    },
+  });
+}
+
+async function loadJobs(root) {
+  const section = root.querySelector('[data-section="jobs"]');
+  if (section) section.innerHTML = toHTML(loadingState({ label: "Reading recent correction jobs…" }));
+  try {
+    const payload = await api.corrections.list({ limit: 5 });
+    if (section) section.innerHTML = toHTML(jobsHTML(payload.jobs));
+  } catch (err) {
+    if (section) {
+      section.innerHTML = toHTML(
+        errorState({
+          title: "Recent jobs unavailable",
+          description: err?.message || "The application server could not be reached to read correction jobs.",
+          actions: button({ label: "Retry", iconName: "refresh", attrs: 'data-action="retry-jobs"' }),
+        }),
+      );
+    }
+  }
+}
+
 export function render() {
   return html`
     ${pageHeader({
       title: "Dashboard",
       description:
-        "A quick overview of the correction system. Counts and readiness are read from the running backend.",
+        "Operational overview of the correction system. Counts and readiness are read live from the running backend.",
       actions: html`
         ${button({ label: "New correction", variant: "primary", iconName: "correction", href: "#/correction" })}
         ${button({ label: "Settings", iconName: "settings", href: "#/settings" })}
@@ -118,27 +203,23 @@ export function render() {
       <h2 id="stats-heading" class="sr-only">Key figures</h2>
       <div class="stat-grid">
         ${statCard({
-          iconName: "tasks",
           label: "Students",
           value: html`<span data-fill="stat-students">—</span>`,
           hint: "Stored in the local database",
         })}
         ${statCard({
-          iconName: "file",
           label: "Assignments",
           value: html`<span data-fill="stat-assignments">—</span>`,
           hint: "Including chapter and lesson codes",
           tone: "info",
         })}
         ${statCard({
-          iconName: "storage",
           label: "Submissions",
           value: html`<span data-fill="stat-submissions">—</span>`,
           hint: html`<span data-fill="stat-submissions-hint">Loading…</span>`,
           tone: "success",
         })}
         ${statCard({
-          iconName: "plug",
           label: "Integrations configured",
           value: html`<span data-fill="integrations">—</span>`,
           hint: "AI provider and Google Classroom",
@@ -149,65 +230,43 @@ export function render() {
 
     <div class="stack">
       ${card({
-        title: "Submissions by status",
-        description: "Live counts of student work recorded in the local database.",
-        actions: button({ label: "Refresh", iconName: "refresh", attrs: 'data-action="retry-stats"' }),
-        body: html`<div data-section="stats">${loadingState({ label: "Reading database statistics…" })}</div>`,
-      })}
-
-      ${card({
-        title: "Recent correction jobs",
-        description: "The latest homework correction jobs and their states.",
-        body: dataTable({
-          columns: [
-            { key: "job", label: "Job" },
-            { key: "assignment", label: "Assignment" },
-            { key: "status", label: "Status" },
-            { key: "started", label: "Started" },
-          ],
-          rows: [],
-          empty: {
-            iconName: "tasks",
-            title: "No correction jobs yet",
-            description:
-              "Correction jobs appear here once the AI correction engine is available in Phase 3.",
-          },
-        }),
+        title: "Correction pipeline",
+        description: "Durable job states read from the local database.",
+        body: html`
+          <div data-section="pipeline">${loadingState({ label: "Reading pipeline counters…" })}</div>
+          <div class="mt-4" data-section="jobs">${loadingState({ label: "Reading recent correction jobs…" })}</div>
+        `,
       })}
 
       <div class="grid-2">
         ${card({
-          title: "Recent activity",
-          description: "Actions taken in the application.",
-          body: emptyState({
-            iconName: "clock",
-            title: "No activity yet",
-            description:
-              "Corrections, reports and other actions will appear here as you use the application.",
-            compact: true,
-          }),
+          title: "Submissions by status",
+          description: "Live counts of student work recorded in the local database.",
+          actions: button({ label: "Refresh", iconName: "refresh", attrs: 'data-action="retry-stats"' }),
+          body: html`<div data-section="stats">${loadingState({ label: "Reading database statistics…" })}</div>`,
         })}
         ${card({
-          title: "Quick actions",
-          description: "Jump straight to a workspace.",
+          title: "Application readiness",
+          description: "Live status of the application and its integrations.",
+          actions: button({ label: "Refresh", iconName: "refresh", attrs: 'data-action="retry-status"' }),
           body: html`
-            <div class="row">
-              ${button({ label: "New correction", variant: "primary", iconName: "correction", href: "#/correction" })}
-              ${button({ label: "Manage storage", iconName: "storage", href: "#/storage" })}
-              ${button({ label: "Task manager", iconName: "tasks", href: "#/tasks" })}
-            </div>
+            <div data-section="readiness">${loadingState({ label: "Reading application status…" })}</div>
+            <p class="field__help mt-4">
+              Status is read from the server when this page opens. Nothing on this page is sample data.
+            </p>
           `,
         })}
       </div>
 
       ${card({
-        title: "Application readiness",
-        description: "Live status of the application and its planned integrations.",
+        title: "Quick actions",
+        description: "Jump straight to a workspace.",
         body: html`
-          <div data-section="readiness">${loadingState({ label: "Reading application status…" })}</div>
-          <p class="field__help mt-4">
-            Status is read from the server when this page opens. Nothing on this page is sample data.
-          </p>
+          <div class="row">
+            ${button({ label: "New correction", variant: "primary", iconName: "correction", href: "#/correction" })}
+            ${button({ label: "Manage storage", iconName: "storage", href: "#/storage" })}
+            ${button({ label: "Task manager", iconName: "tasks", href: "#/tasks" })}
+          </div>
         `,
       })}
     </div>
@@ -254,6 +313,34 @@ async function loadStats(root) {
   }
 }
 
+/** Derive pipeline stage counters from the full job list. */
+export function pipelineCounts(jobs) {
+  const counts = { queued: 0, processing: 0, completed: 0, failed: 0 };
+  for (const job of jobs || []) {
+    if (job.status in counts) counts[job.status] += 1;
+  }
+  return counts;
+}
+
+async function loadPipeline(root) {
+  const section = root.querySelector('[data-section="pipeline"]');
+  if (section) section.innerHTML = toHTML(loadingState({ label: "Reading pipeline counters…" }));
+  try {
+    const payload = await api.corrections.list({ limit: 50 });
+    if (section) section.innerHTML = toHTML(pipelineHTML(pipelineCounts(payload.jobs)));
+  } catch {
+    if (section) {
+      section.innerHTML = toHTML(
+        errorState({
+          title: "Pipeline unavailable",
+          description: "The application server could not be reached to read correction job states.",
+          actions: button({ label: "Retry", iconName: "refresh", attrs: 'data-action="retry-jobs"' }),
+        }),
+      );
+    }
+  }
+}
+
 async function loadReadiness(root) {
   const section = root.querySelector('[data-section="readiness"]');
   const fill = root.querySelector('[data-fill="integrations"]');
@@ -280,6 +367,8 @@ async function loadReadiness(root) {
 export function mount(root, { signal } = {}) {
   loadStats(root);
   loadReadiness(root);
+  loadPipeline(root);
+  loadJobs(root);
   root.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -288,6 +377,10 @@ export function mount(root, { signal } = {}) {
     }
     if (target.closest('[data-action="retry-status"]')) {
       loadReadiness(root);
+    }
+    if (target.closest('[data-action="retry-jobs"]')) {
+      loadPipeline(root);
+      loadJobs(root);
     }
   }, { signal });
 }

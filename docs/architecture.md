@@ -1,6 +1,6 @@
 # Math Checker V6 — Architecture
 
-**Phase 3 · Correction Engine**
+**Phase 4 · Application Integration**
 
 This document records the architecture chosen for V6, why it was chosen over
 the alternatives, the dependency budget, and exactly where later phases plug
@@ -40,8 +40,9 @@ V5 (`MATH_CHECKER_V5`) was inspected before any V6 code was written:
 ```
 Browser ── static files ──▶ FastAPI (uvicorn)
    │                            │
-   └── JSON (fetch) ──▶ /api/health, /api/system/status, /api/settings,
-                        /api/database/stats, /api/storage/summary
+   └── JSON + multipart ──▶ /api/health, /api/system/status, /api/settings,
+                            /api/database/stats, /api/storage/summary,
+                            /api/corrections
                                 │
                                 ▼
                         Storage (sole SQL boundary)
@@ -49,14 +50,16 @@ Browser ── static files ──▶ FastAPI (uvicorn)
                                 ▼
                         SQLite  data/app.db
 
-Correction pipeline (Phase 3, no HTTP route yet):
-validate_request → document extraction → scheme blueprint →
-Gemini provider → JSON validation → deterministic checks → report
+Correction pipeline (Phases 3–4):
+validate request → upload workspace → validate/extract documents →
+scheme blueprint → provider → JSON + mark validation → deterministic checks
+→ validate report → persist items + totals → completed job
 ```
 
-- **Backend:** FastAPI + uvicorn + pypdf. Three runtime dependencies. The
-  database is the standard-library `sqlite3`; no ORM, no migration package,
-  no worker, no external service, no startup network call.
+- **Backend:** FastAPI + uvicorn + python-multipart + pypdf. Four runtime
+  dependencies. The database is the standard-library `sqlite3`; no ORM, no
+  migration package, no external service, no startup network call. Jobs run
+  in a bounded in-process daemon worker, not a distributed queue.
 - **Storage:** SQLite in the configured data directory (`MC6_DATA_DIR`, or
   `./data`). WAL mode, foreign keys and a busy timeout are set on every
   connection; each operation opens and closes its own connection.
@@ -91,9 +94,10 @@ backend/
 │   ├── logging_setup.py     # application logger + request-id context
 │   ├── db.py                # connections, PRAGMAs, migration runner, status
 │   ├── migrations/
-│   │   └── 001_initial.sql  # schema version 1
+│   │   ├── 001_initial.sql  # schema version 1
+│   │   └── 002_correction_jobs.sql  # durable jobs, files, question rows
 │   ├── models.py            # dataclasses, enums, settings definitions
-│   ├── storage.py           # the only SQL: records, settings, statistics
+│   ├── storage.py           # the only SQL: records, settings, jobs, results
 │   ├── services.py          # SettingsService, StatsService
 │   ├── dev_fixtures.py      # deterministic, idempotent development seed
 │   ├── engine.py            # engine contract, data types, get_engine()
@@ -105,7 +109,8 @@ backend/
 │   │   ├── parsing.py       # strict JSON parsing
 │   │   ├── validation.py    # marks, maxima, totals, completeness
 │   │   ├── verify.py        # numeric/algebraic checks (never edits marks)
-│   │   └── service.py       # orchestration + provider construction
+│   │   ├── service.py       # orchestration + provider construction
+│   │   └── jobs.py          # durable lifecycle, workspace, bounded worker
 │   ├── main.py              # FastAPI app: lifespan, routers, middleware, static
 │   └── api/
 │       ├── deps.py          # storage/settings/stats dependency providers
@@ -114,7 +119,8 @@ backend/
 │       ├── system.py        # GET /api/health, GET /api/system/status
 │       ├── settings.py      # GET, PATCH /api/settings
 │       ├── database.py      # GET /api/database/stats
-│       └── storage.py       # GET /api/storage/summary (bounded walk)
+│       ├── storage.py       # GET /api/storage/summary (bounded walk)
+│       └── corrections.py   # submit/list/status/report routes
 └── tests/                   # pytest suite
 ```
 
@@ -146,10 +152,12 @@ Principles:
   `index.html` at `/`. The OpenAPI document is available at
   `/api/openapi.json`; the CDN-backed Swagger/ReDoc UIs stay disabled.
 
-### Schema version 1
+### Schema versions 1 and 2
 
-`students`, `assignments`, `submissions`, `correction_results` and
-`settings`. Rules encoded in both the schema and `storage.py`:
+Version 1: `students`, `assignments`, `submissions`, `correction_results` and
+`settings`. Version 2 adds `correction_jobs`, `correction_job_files` and
+`correction_items` for the durable correction workflow. Rules encoded in both
+the schema and `storage.py`:
 
 - Marks are `NULL` only when absent; **zero is a real mark**.
 - `missing`, `draft`, `submitted`, `graded` and `failed` submissions are
@@ -159,6 +167,13 @@ Principles:
   never parsed or normalised.
 - One correction result per submission, enforced by a UNIQUE constraint and a
   deliberate conflict error.
+- A correction job is `queued` before any provider call, moves atomically to
+  `processing`, and may reach `completed` only in the transaction that inserts
+  all question rows. A failed job cannot be overwritten by a later completion.
+- Job file rows store metadata only. Uploaded bytes live in a per-job
+  workspace and are deleted on every terminal path.
+- Idempotency keys have a partial UNIQUE index, so concurrent retries cannot
+  create duplicate jobs.
 
 ## 4. Frontend design
 
@@ -199,7 +214,7 @@ Rules that keep this maintainable:
 
 | | Count | Notes |
 |---|---|---|
-| Runtime (direct) | **3** | `fastapi`, `uvicorn`, `pypdf` (plain-Python PDF text extraction) |
+| Runtime (direct) | **4** | `fastapi`, `uvicorn`, `python-multipart` (browser uploads), `pypdf` |
 | Database | **0** | standard-library `sqlite3` |
 | AI transport | **0** | standard-library `urllib`; no provider SDK |
 | Dev | 2 | `pytest`, `httpx` |
@@ -215,16 +230,16 @@ Correction logic must **not** be copied into page components. The seam is
 input policy, `get_engine()`), backed by `backend/app/correction/`.
 `docs/correction-engine-contract.md` is the executable + behavioral contract.
 
-Phase 3 implements the engine and a process-local registry. It deliberately
-adds **no** HTTP routes, no database tables and no frontend upload flow.
-Phase 4 owns those.
+Phase 3 implements the engine; Phase 4 adds the durable job layer without
+changing the engine contract. The engine's process-local registry is no longer
+the source of truth for results — `Storage` is.
 
-| Future feature | Backend seam | Frontend seam |
+| Feature | Backend seam | Frontend seam |
 |---|---|---|
-| Correction jobs (Phase 4) | new `backend/app/api/corrections.py` router calling `get_engine()`; migration `002` for jobs/items through the storage boundary | `api.js` gains `corrections.*`; `pages/correction.js` fills its jobs/results tabs |
+| Correction jobs (Phase 4, **implemented**) | `backend/app/api/corrections.py` → `CorrectionJobService` → Phase 3 engine; migration `002`; report persisted through `Storage` before completion | `api.js` `corrections.*`; `pages/correction.js` upload/job/results tabs; `pages/dashboard.js` recent jobs |
 | Google Classroom | `backend/app/api/classroom.py` + provider module; OAuth material server-side only | Settings' Classroom placeholder section + a future page routed via `router.js` |
-| Reports | `backend/app/api/reports.py`; generated files under the data directory | new page module; Storage page already has a "Reports" category |
-| Background tasks | Phase 4 job persistence + a bounded scheduler only if needed; status endpoints, no polling loops | `pages/tasks.js` already shows the four task categories |
+| Report files | `backend/app/api/reports.py`; generated files under the data directory; must read persisted items only | new page module; Storage page already has a "Reports" category |
+| Background tasks UI | Job persistence exists; the Task Manager remains an honest overview | `pages/tasks.js` shows correction-job guidance and planned categories |
 
 Contract rules for Phase 4+ work:
 
@@ -238,13 +253,13 @@ Contract rules for Phase 4+ work:
   automated tests at both layers, and an update to the feature flags in
   `api/system.py` (which drive the Dashboard readiness panel).
 
-## 7. What was deliberately left out of Phase 3
+## 7. Deliberately deferred after Phase 4
 
-Durable job persistence and the `queued`/`processing` lifecycle, upload/report
-HTTP routes, frontend uploading and result display, report file generation,
-Classroom sync, provider-key rotation/management, authentication,
-class/roster grouping, grade boundaries and deployment automation. The UI
-labels each as planned instead of simulating it.
+Downloadable report files, Edexcel grades, Classroom sync, provider-key
+rotation/management, authentication, class/roster grouping, multi-process or
+distributed workers, and deployment automation. The UI labels each as planned
+instead of simulating it. `features.reports` stays false until report files
+work end to end.
 
 ## 8. Correction-engine architecture (Phase 3)
 
@@ -268,3 +283,25 @@ labels each as planned instead of simulating it.
   path or student content is logged.
 - **Blocking work runs off the event loop** via `asyncio.to_thread`, with at
   most two concurrent provider calls per process.
+
+### Job layer (Phase 4)
+
+- `POST /api/corrections` validates multipart inputs, writes a per-job
+  workspace, extracts each document to reject corrupt/encrypted/mislabelled
+  bytes, inserts a `queued` row, then starts a daemon worker. The route is thin;
+  `CorrectionJobService` owns the sequence.
+- A bounded semaphore (`2` workers) limits concurrent jobs; the engine also
+  limits provider calls. A queued job waits honestly rather than showing fake
+  percentage progress.
+- `queued → processing → completed | failed` transitions are atomic storage
+  operations. Completion inserts every question row and report total in the
+  same transaction that sets the status.
+- The workspace is removed in a `finally` block for success, failure and
+  unexpected exceptions. Startup reconciliation fails jobs left active by a
+  crash and prunes their workspaces.
+- The API returns filenames, sizes and roles — never server paths or pasted
+  mark-scheme text. Report retrieval reads SQLite only; it does not call the
+  provider.
+- Single-process assumption: the daemon workers and startup reconciliation are
+  designed for one uvicorn process. Running multiple application processes
+  would require an external queue/lease and is explicit non-goal work.

@@ -43,9 +43,10 @@ test("shell leaves the version label to the status response", () => {
 
 test("icon-only controls carry accessible names", () => {
   const markup = render(shellTemplate({ activePath: "/dashboard" }));
-  assert.ok(markup.includes('aria-label="Collapse sidebar"'));
   assert.ok(markup.includes('aria-label="Open navigation"'));
   assert.ok(markup.includes('aria-label="Settings"'));
+  // The old sidebar is replaced by the command bar; no collapse control exists.
+  assert.ok(!markup.includes("Collapse sidebar"));
 });
 
 test("dashboard renders live placeholders and honest empty states", () => {
@@ -56,10 +57,29 @@ test("dashboard renders live placeholders and honest empty states", () => {
   assert.ok(markup.includes('data-fill="stat-submissions"'));
   assert.ok(markup.includes("Submissions by status"));
   assert.ok(markup.includes("Application readiness"));
-  assert.ok(markup.includes("No correction jobs yet"));
+  assert.ok(markup.includes('data-section="jobs"'));
+  assert.ok(markup.includes("Correction pipeline"));
+  assert.ok(markup.includes('data-section="pipeline"'));
+  assert.ok(render(dashboard.jobsHTML([])).includes("No correction jobs yet"));
   // No fabricated metrics anywhere.
   assert.ok(!markup.includes("$"));
   assert.ok(!markup.includes("%"));
+});
+
+test("dashboard pipeline counts derive honest stage counters", () => {
+  const counts = dashboard.pipelineCounts([
+    { status: "queued" },
+    { status: "queued" },
+    { status: "processing" },
+    { status: "completed" },
+    { status: "failed" },
+    { status: "unknown" },
+  ]);
+  assert.deepEqual(counts, { queued: 2, processing: 1, completed: 1, failed: 1 });
+  const markup = render(dashboard.pipelineHTML(counts));
+  assert.ok(markup.includes('data-tone="queued"'));
+  assert.ok(markup.includes('data-tone="failed"'));
+  assert.ok(markup.includes(">2<"));
 });
 
 test("dashboard readiness reflects the real database status", () => {
@@ -76,8 +96,14 @@ test("dashboard readiness reflects the real database status", () => {
     database: { status: "unavailable", schema_version: null },
     ai_provider_configured: false,
     classroom_configured: false,
+    features: { ai_correction: false, background_tasks: false },
+    correction_engine: { name: "gemini:test", available: true },
   });
   assert.match(render(unavailable.find((row) => row.label === "Database").value), /Unavailable/);
+  assert.match(
+    render(unavailable.find((row) => row.label === "Correction processing").value),
+    /Unavailable \(database\)/,
+  );
 });
 
 test("dashboard correction readiness follows the live engine flag", () => {
@@ -114,16 +140,21 @@ test("correction page implements tabs, file input and a disabled start action", 
   assert.ok(markup.includes('role="tablist"'));
   assert.ok(markup.includes('type="file"'));
   assert.ok(markup.includes(`accept="${correction.ACCEPTED_TYPES.join(",")}"`));
-  assert.ok(markup.includes("Uploading arrives in Phase 4"));
   assert.ok(markup.includes('data-fill="max-upload-help"'));
   assert.ok(markup.includes("Reading the current upload limit"));
   assert.ok(markup.includes("data-modal-confirm"));
   assert.ok(markup.includes("data-upload-limit-retry"));
   assert.ok(markup.includes('data-action="retry-upload-limit"'));
+  assert.ok(markup.includes('data-section="jobs"'));
+  assert.ok(markup.includes('data-section="results"'));
   assert.ok(!markup.includes("25 MB"));
   assert.equal(correction.resolveUploadLimitMB({ max_upload_mb: 10 }), 10);
   assert.equal(correction.resolveUploadLimitMB({ max_upload_mb: 0 }), null);
   assert.equal(correction.resolveUploadLimitMB({}), null);
+  assert.equal(correction.jobStatusLabel("queued"), "Queued");
+  assert.equal(correction.jobStatusLabel("processing"), "Processing");
+  assert.equal(correction.formatMark(null, 10), "Not marked");
+  assert.equal(correction.formatMark(0, 10), "0 / 10");
   const labelIndex = markup.indexOf("Start correction");
   const tagStart = markup.lastIndexOf("<button", labelIndex);
   const buttonTag = markup.slice(tagStart, markup.indexOf(">", tagStart) + 1);
@@ -131,15 +162,104 @@ test("correction page implements tabs, file input and a disabled start action", 
   assert.ok(buttonTag.includes('aria-disabled="true"'), "aria-disabled must be well-formed");
 });
 
+test("correction draft validation mirrors the backend input policy", () => {
+  const valid = {
+    context: { title: "Chapter 4", markScheme: "1  2" },
+    studentFiles: [{ id: 1, name: "work.pdf" }],
+    schemeFiles: [],
+    options: { maxScore: "" },
+  };
+  assert.deepEqual(correction.validateDraft(valid), []);
+  assert.match(
+    correction.validateDraft({ ...valid, context: { title: "", markScheme: "" } }).join(" "),
+    /title.*mark scheme/i,
+  );
+  assert.match(
+    correction.validateDraft({ ...valid, studentFiles: [] }).join(" "),
+    /student file/i,
+  );
+  assert.match(
+    correction.validateDraft({ ...valid, options: { maxScore: "0" } }).join(" "),
+    /positive number/i,
+  );
+  assert.match(
+    correction.validateDraft(valid, { engineAvailable: false }).join(" "),
+    /not configured/i,
+  );
+});
+
+test("correction results distinguish complete and partial reports", () => {
+  const item = (label, awarded, outOf, status = "marked") => ({
+    label,
+    awarded,
+    out_of: outOf,
+    status,
+    feedback: "Feedback.",
+    criteria: [],
+    student_evidence: "",
+    scheme_evidence: "",
+    verification: "",
+    student_answer: "",
+    scheme_answer: "",
+    warnings: [],
+    review_flags: [],
+  });
+
+  const complete = render(
+    correction.reportHTML({
+      job_id: "job-1",
+      summary: "Complete.",
+      awarded: 9,
+      out_of: 10,
+      percentage: 90,
+      status: "completed",
+      review_required: false,
+      unresolved: [],
+      warnings: [],
+      engine: "test",
+      created_at: "2026-01-01T00:00:00+00:00",
+      items: [item("1", 9, 10)],
+    }),
+  );
+  assert.ok(complete.includes("90%"));
+  assert.ok(complete.includes("9 / 10"));
+  assert.ok(!complete.includes("Partial correction — not a final score"));
+
+  const partial = render(
+    correction.reportHTML({
+      job_id: "job-2",
+      summary: "One question could not be read.",
+      awarded: 7,
+      out_of: 10,
+      percentage: null,
+      status: "partial",
+      review_required: true,
+      unresolved: ["3"],
+      warnings: ["The handwriting is unclear."],
+      engine: "test",
+      created_at: "2026-01-01T00:00:00+00:00",
+      items: [item("1", 7, 7), item("3", null, 3, "unreadable")],
+    }),
+  );
+  assert.ok(partial.includes("Partial correction — not a final score"));
+  assert.ok(partial.includes("Not shown for a partial result"));
+  assert.ok(partial.includes("Unresolved questions"));
+  assert.ok(partial.includes("Not marked"));
+  assert.ok(!partial.includes("70%"));
+});
+
 test("settings page labels its fields and exposes real server settings", () => {
   const markup = render(settings.render());
-  for (const id of ["pref-start-page", "pref-density", "pref-confirm-remove", "ai-provider", "classroom-oauth"]) {
+  for (const id of ["pref-start-page", "pref-density", "pref-confirm-remove", "ai-provider"]) {
     assert.ok(markup.includes(`for="${id}"`), `label for ${id}`);
     assert.ok(markup.includes(`id="${id}"`), `control ${id}`);
   }
   assert.ok(markup.includes('data-section="server-settings"'));
   assert.ok(markup.includes("Save preferences"));
-  assert.ok(markup.includes("Planned"));
+  // The Classroom card is real setup guidance, not a disabled placeholder.
+  assert.ok(markup.includes("Google Classroom"));
+  assert.ok(markup.includes("CLASSROOM_CONFIGURATION.md"));
+  assert.ok(markup.includes("Server-side setup"));
   assert.ok(!markup.includes("api_key"), "no key material field names");
 
   const form = render(
@@ -167,7 +287,8 @@ test("storage and task pages explain their empty state honestly", () => {
   const tasksMarkup = render(tasks.render());
   assert.ok(tasksMarkup.includes("Assignment correction tasks"));
   assert.ok(tasksMarkup.includes("No tasks"));
-  assert.ok(tasksMarkup.includes("no task system exists yet"));
+  assert.ok(tasksMarkup.includes("Correction jobs are tracked on the AI Correction page"));
+  assert.ok(tasksMarkup.includes("See AI Correction"));
 });
 
 test("not-found page names the missing route", () => {

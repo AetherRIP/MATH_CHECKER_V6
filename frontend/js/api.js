@@ -14,12 +14,18 @@ export class ApiError extends Error {
   }
 }
 
-export async function requestJSON(path, { method = "GET", body, timeout = 10000 } = {}) {
+export async function requestJSON(
+  path,
+  { method = "GET", body, formData, timeout = 10000, headers: extraHeaders } = {},
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
-  const headers = { Accept: "application/json" };
+  const headers = { Accept: "application/json", ...(extraHeaders || {}) };
   const init = { method, signal: controller.signal, headers };
-  if (body !== undefined) {
+  if (formData !== undefined) {
+    // The browser sets the multipart boundary; never set Content-Type here.
+    init.body = formData;
+  } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
@@ -64,6 +70,25 @@ export const api = {
   settings: {
     get: () => requestJSON("/api/settings"),
     update: (changes) => requestJSON("/api/settings", { method: "PATCH", body: changes }),
+  },
+  classroom: {
+    status: () => requestJSON("/api/classroom/status"),
+  },
+  corrections: {
+    submit: (formData, { idempotencyKey } = {}) =>
+      requestJSON("/api/corrections", {
+        method: "POST",
+        formData,
+        // The route validates and queues; this budget covers a slow upload
+        // and server-side extraction, not the asynchronous AI call.
+        timeout: 300000,
+        headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      }),
+    list: ({ limit = 50 } = {}) =>
+      requestJSON(`/api/corrections?limit=${encodeURIComponent(limit)}`),
+    get: (jobId) => requestJSON(`/api/corrections/${encodeURIComponent(jobId)}`),
+    report: (jobId) =>
+      requestJSON(`/api/corrections/${encodeURIComponent(jobId)}/report`),
   },
   systemStatus() {
     if (!statusPromise) {

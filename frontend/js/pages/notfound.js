@@ -8,6 +8,7 @@ import { emptyState } from "../ui/states.js";
 export function render({ path } = {}) {
   return html`
     ${pageHeader({
+      eyebrow: "Error",
       title: "Page not found",
       description: "The address you opened does not match any page in this application.",
     })}

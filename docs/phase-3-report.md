@@ -407,5 +407,5 @@ if job.status.value == "completed":
 | 1 — Interface foundation | Complete |
 | 2 — Backend foundation | Complete |
 | 3 — Mathematical correction engine | Complete (live-accuracy evaluation deferred) |
-| 4 — Application integration | Not started: upload endpoints, durable jobs, results UI, reports |
-| Later — Classroom sync, rosters, deployment hardening | Deferred |
+| 4 — Application integration | Complete for upload → durable job → real engine → persisted results → UI. Generated report files remain deferred (see `phase-4-report.md`). |
+| Later — Report files, Classroom sync, rosters, deployment hardening | Deferred |

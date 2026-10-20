@@ -53,7 +53,7 @@ def test_stats_service_snapshot_shape(storage):
 
     snapshot = StatsService(storage).snapshot()
 
-    assert snapshot["database"] == {"status": "ready", "schema_version": 1}
+    assert snapshot["database"] == {"status": "ready", "schema_version": 3}
     assert snapshot["counts"]["students"] == 1
     assert snapshot["counts"]["assignments"] == 1
     assert snapshot["counts"]["submissions"]["graded"] == 1

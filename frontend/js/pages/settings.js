@@ -101,8 +101,7 @@ function settingsForm() {
             help: "Compact reduces padding for high-density work.",
           })}
           <p class="field__help">
-            The sidebar remembers whether it is collapsed. Animations automatically reduce when your
-            system requests reduced motion.
+            Animations automatically reduce when your system requests reduced motion.
           </p>
         `,
       })}
@@ -126,15 +125,19 @@ function settingsForm() {
       ${card({
         title: "Google Classroom",
         description: "Assignment and roster synchronisation.",
-        actions: badge({ label: "Planned · later phase", tone: "warning" }),
+        actions: badge({ label: "Server-side setup", tone: "neutral", iconName: "plug" }),
         body: html`
-          ${textInput({
-            id: "classroom-oauth",
-            label: "OAuth client",
-            value: "",
-            disabled: true,
-            help: "Classroom integration is planned for a later phase. No credentials are collected yet.",
-          })}
+          ${detailRows([
+            {
+              label: "Setup",
+              value:
+                "The live connection state is shown in Application information " +
+                "below. Setup: place the OAuth client JSON in the server's " +
+                "data directory (secrets/google_oauth_client.json) or set " +
+                "MC6_GOOGLE_OAUTH_CLIENT, then use /api/classroom/connect. " +
+                "See CLASSROOM_CONFIGURATION.md.",
+            },
+          ])}
         `,
       })}
 
@@ -162,14 +165,14 @@ function settingsForm() {
 
       ${card({
         title: "Application information",
-        description: "Version and connectivity diagnostics.",
-        body: html`
+        description: "Version and connectivity diagnostics.",        body: html`
           ${detailRows([
             { label: "Application", value: "Math Checker V6" },
             { label: "Interface version", value: html`<span data-fill="interface-version">—</span>` },
             { label: "Backend version", value: html`<span data-fill="backend-version">—</span>` },
             { label: "Backend connection", value: html`<span data-fill="backend-connection">—</span>` },
             { label: "Database", value: html`<span data-fill="database-status">—</span>` },
+            { label: "Google Classroom", value: html`<span data-fill="classroom-status">—</span>` },
             {
               label: "Preference storage",
               value: html`<span data-fill="pref-storage">—</span>`,
@@ -262,6 +265,24 @@ function loadDiagnostics(root) {
             ? `Ready · schema ${status.database.schema_version}`
             : "Unavailable";
       }
+      // Honest integration state: configured / connected / prerequisite names.
+      api.classroom.status().then(
+        (classroom) => {
+          const slot = root.querySelector('[data-fill="classroom-status"]');
+          if (!slot) return;
+          if (classroom.connected) {
+            slot.textContent = "Connected";
+          } else if (classroom.configured) {
+            slot.textContent = "Client present — connect required";
+          } else {
+            slot.textContent = "Not configured (OAuth client JSON missing)";
+          }
+        },
+        () => {
+          const slot = root.querySelector('[data-fill="classroom-status"]');
+          if (slot) slot.textContent = "Unavailable";
+        },
+      );
     },
     () => {
       if (interfaceVersion) interfaceVersion.textContent = "—";
@@ -307,12 +328,35 @@ function saveServerSettings(root, form) {
 export function render() {
   return html`
     ${pageHeader({
+      eyebrow: "System",
       title: "Settings",
       description:
         "Application preferences, server settings and diagnostics. Interface preferences are saved in this browser; operational settings are stored in the local database.",
     })}
-    ${serverSettingsCard()}
-    ${settingsForm()}
+    <div class="settings-layout">
+      <aside class="settings-nav" aria-label="Settings categories">
+        <p class="section-label mb-2">Categories</p>
+        ${[
+          ["Server", "server-settings"],
+          ["General", "general"],
+          ["Appearance", "appearance"],
+          ["AI provider", "ai-provider"],
+          ["Google Classroom", "classroom"],
+          ["Storage and files", "storage"],
+          ["Application info", "application-info"],
+        ].map(
+          ([label, anchor]) => html`<a
+            class="settings-nav__item"
+            href="#settings-${anchor}"
+            data-settings-link="${anchor}"
+          >${label}</a>`,
+        )}
+      </aside>
+      <div class="stack">
+        ${serverSettingsCard()}
+        ${settingsForm()}
+      </div>
+    </div>
   `;
 }
 

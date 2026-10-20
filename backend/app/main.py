@@ -1,11 +1,12 @@
 """FastAPI application for Math Checker V6.
 
 Phase 2 added a local SQLite database behind a storage boundary; Phase 3 adds
-the correction engine behind `app.engine`. The process stays idle until a
-request arrives: no background workers, no provider call at startup and no
-startup network calls. If the database cannot initialize, the application
-starts degraded — the UI and liveness probe still work, and data routes
-return a safe 503 error envelope.
+the correction engine behind `app.engine`; Phase 4 adds durable correction
+jobs, uploads and the result API. The process makes no provider call at
+startup. Correction jobs run in a bounded daemon worker after the HTTP
+request has created the durable queued record. If the database cannot
+initialize, the application starts degraded — the UI and liveness probe still
+work, and data routes return a safe 503 error envelope.
 """
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from .api import database, settings, storage, system
+from .api import classroom, corrections, database, settings, storage, system
 from .api.error_handlers import register_error_handlers
 from .config import APP_NAME, APP_VERSION, ensure_dirs
+from .correction.jobs import CorrectionJobService
 from .db import Database, DatabaseError
+from .engine import get_engine
 from .logging_setup import (
     configure_logging,
     get_logger,
@@ -42,6 +45,11 @@ async def lifespan(app: FastAPI):
     """Create the data directories, logging and database; never crash on failure."""
     configure_logging("INFO")
     app.state.storage = None
+    app.state.jobs = None
+    # Construct the engine once: its Phase 3 registry is per instance and a
+    # provider call must never happen at startup. The honest unavailable
+    # fallback is still a usable object for readiness/status.
+    app.state.engine = get_engine()
 
     try:
         config = ensure_dirs()
@@ -55,6 +63,16 @@ async def lifespan(app: FastAPI):
         log.exception("database initialization failed")
     else:
         app.state.storage = storage_layer
+        jobs = CorrectionJobService(
+            storage_layer, app.state.engine, config.uploads_dir
+        )
+        try:
+            jobs.recover_interrupted()
+        except Exception:
+            # Recovery is important but must not take the whole application
+            # down; data routes still work and a later restart retries it.
+            log.exception("interrupted correction-job recovery failed")
+        app.state.jobs = jobs
         log.info("%s %s ready (database schema initialized)", APP_NAME, APP_VERSION)
 
     yield
@@ -112,6 +130,8 @@ app.include_router(system.router)
 app.include_router(settings.router)
 app.include_router(database.router)
 app.include_router(storage.router)
+app.include_router(corrections.router)
+app.include_router(classroom.router)
 
 
 # Static frontend, mounted last so /api/* routes win. Starlette's StaticFiles

@@ -73,7 +73,12 @@ def create_engine() -> CorrectionEngine:
     try:
         config = get_ai_config()
     except ConfigError as exc:
-        return UnavailableEngine(f"The AI provider configuration is invalid: {exc}")
+        # The config error names a variable, never its value. The public reason
+        # stays generic; operators get the actionable detail in the log.
+        log.error("AI provider configuration is invalid: %s", exc)
+        return UnavailableEngine(
+            "The AI provider configuration is invalid. Check the server's AI settings."
+        )
     if config is None:
         return UnavailableEngine()
 
@@ -120,7 +125,7 @@ class CorrectionService:
     async def submit(self, request: CorrectionRequest) -> CorrectionJob:
         validate_request(request)
 
-        job_id = new_id()
+        job_id = request.job_id or new_id()
         submitted_at = self._clock()
         filenames = tuple(
             [item.filename for item in request.files]

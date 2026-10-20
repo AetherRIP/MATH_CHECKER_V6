@@ -36,9 +36,9 @@ export function tabsTemplate({ id, label, items = [], activeId } = {}) {
   `;
 }
 
-function selectTab(root, tabId) {
-  const tabs = Array.from(root.querySelectorAll("[data-tab]"));
-  const panels = Array.from(root.querySelectorAll("[data-panel]"));
+function selectTabIn(tabsRoot, tabId) {
+  const tabs = Array.from(tabsRoot.querySelectorAll("[data-tab]"));
+  const panels = Array.from(tabsRoot.querySelectorAll("[data-panel]"));
   for (const tab of tabs) {
     const active = tab.dataset.tab === tabId;
     tab.setAttribute("aria-selected", active ? "true" : "false");
@@ -49,11 +49,19 @@ function selectTab(root, tabId) {
   }
 }
 
+/** Select a tab from a page root or the tabs root itself. */
+export function selectTab(root, tabId) {
+  const tabsRoot = root.matches?.("[data-tabs]")
+    ? root
+    : root.querySelector("[data-tabs]");
+  if (tabsRoot) selectTabIn(tabsRoot, tabId);
+}
+
 export function initTabs(root, { signal } = {}) {
   for (const tabsRoot of root.querySelectorAll("[data-tabs]")) {
     tabsRoot.addEventListener("click", (event) => {
       const tab = event.target instanceof Element ? event.target.closest("[data-tab]") : null;
-      if (tab) selectTab(tabsRoot, tab.dataset.tab);
+      if (tab) selectTabIn(tabsRoot, tab.dataset.tab);
     }, { signal });
 
     tabsRoot.addEventListener("keydown", (event) => {
@@ -68,7 +76,7 @@ export function initTabs(root, { signal } = {}) {
       else if (event.key === "End") next = tabs[tabs.length - 1];
       if (next) {
         event.preventDefault();
-        selectTab(tabsRoot, next.dataset.tab);
+        selectTabIn(tabsRoot, next.dataset.tab);
         next.focus();
       }
     }, { signal });

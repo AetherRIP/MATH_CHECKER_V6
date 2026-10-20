@@ -10,7 +10,7 @@ def test_empty_database_stats_shape(client, tmp_path):
     assert response.status_code == 200
     data = response.json()
 
-    assert data["database"] == {"status": "ready", "schema_version": 1}
+    assert data["database"] == {"status": "ready", "schema_version": 3}
     assert data["counts"] == {
         "students": 0,
         "assignments": 0,

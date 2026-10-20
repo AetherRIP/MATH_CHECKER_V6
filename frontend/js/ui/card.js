@@ -1,13 +1,15 @@
-/* Content cards, statistic cards and the standard page header. */
+/* Content cards, statistic readouts and the standard page header. */
 
 import { html } from "./html.js";
-import { icon } from "../icons.js";
 
-export function pageHeader({ title, description, actions } = {}) {
+export function pageHeader({ eyebrow, title, description, actions } = {}) {
   return html`
     <header class="page-header">
       <div class="page-header__text">
-        <h1>${title}</h1>
+        ${eyebrow ? html`<p class="section-label page-header__eyebrow">${eyebrow}</p>` : ""}
+        <div class="page-header__title-row">
+          <h1>${title}</h1>
+        </div>
         ${description ? html`<p class="page-header__desc">${description}</p>` : ""}
       </div>
       ${actions ? html`<div class="page-header__actions">${actions}</div>` : ""}
@@ -25,23 +27,20 @@ export function card({ title, description, actions, body, footer, className = ""
               ${description ? html`<p class="card__desc">${description}</p>` : ""}
             </div>
             ${actions ? html`<div class="card__actions">${actions}</div>` : ""}
-          </header>`
-        : ""}
+          </header>` : ""}
       <div class="card__body">${body}</div>
       ${footer ? html`<footer class="card__footer">${footer}</footer>` : ""}
     </section>
   `;
 }
 
-export function statCard({ iconName, label, value, hint, tone = "accent" } = {}) {
+export function statCard({ label, value, hint, tone = "accent" } = {}) {
   return html`
     <div class="stat-card" data-tone="${tone}">
-      <div class="stat-card__top">
-        <span class="stat-card__icon">${icon(iconName, { size: 18 })}</span>
-        <span class="stat-card__label">${label}</span>
-      </div>
-      <div class="stat-card__value">${value}</div>
-      ${hint ? html`<div class="stat-card__hint">${hint}</div>` : ""}
+      <span class="stat-card__label">${label}</span>
+      <span class="stat-card__value">${value}</span>
+      ${hint ? html`<span class="stat-card__hint">${hint}</span>` : ""}
+      <span class="stat-card__accent"></span>
     </div>
   `;
 }

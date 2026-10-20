@@ -100,7 +100,7 @@ def test_ai_config_defaults(client, monkeypatch):
     monkeypatch.setenv("MC6_AI_API_KEY", "key-value")
     config = get_ai_config()
     assert config is not None
-    assert config.model == "gemini-2.5-flash"
+    assert config.model == "gemini-3.5-flash-lite"
     assert config.base_url == "https://generativelanguage.googleapis.com"
     assert config.timeout_seconds == 180
     assert config.max_retries == 2
@@ -137,15 +137,19 @@ def test_ai_config_rejects_invalid_values_without_echoing_the_key(client, monkey
         get_ai_config()
 
 
-def test_ai_and_classroom_flags_read_real_environment(client, monkeypatch):
-    from app.config import ai_provider_configured, classroom_configured
+def test_ai_and_classroom_flags_read_real_environment(client, tmp_path, monkeypatch):
+    from app.config import ai_provider_configured, classroom_client_configured
 
     monkeypatch.delenv("MC6_AI_API_KEY", raising=False)
     monkeypatch.delenv("MC6_GOOGLE_OAUTH_CLIENT", raising=False)
     assert ai_provider_configured() is False
-    assert classroom_configured() is False
+    assert classroom_client_configured() is False
 
     monkeypatch.setenv("MC6_AI_API_KEY", "x")
-    monkeypatch.setenv("MC6_GOOGLE_OAUTH_CLIENT", "y")
+    # An inline JSON OAuth client is materialised under the data directory.
+    monkeypatch.setenv(
+        "MC6_GOOGLE_OAUTH_CLIENT",
+        '{"installed":{"client_id":"cid","client_secret":"sec"}}',
+    )
     assert ai_provider_configured() is True
-    assert classroom_configured() is True
+    assert classroom_client_configured() is True

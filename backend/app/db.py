@@ -21,11 +21,25 @@ from .models import DatabaseStatus
 
 log = logging.getLogger("mathchecker.db")
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 3
 DATABASE_UNAVAILABLE_DETAIL = "The local database is not available."
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 REQUIRED_TABLES = frozenset(
-    {"settings", "students", "assignments", "submissions", "correction_results"}
+    {
+        "settings",
+        "students",
+        "assignments",
+        "submissions",
+        "correction_results",
+        "correction_jobs",
+        "correction_job_files",
+        "correction_items",
+        "classroom_courses",
+        "classroom_coursework",
+        "classroom_submissions",
+        "classroom_publish_ops",
+        "classroom_canonical_reports",
+    }
 )
 
 

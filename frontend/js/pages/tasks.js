@@ -16,31 +16,36 @@ const CATEGORIES = [
     iconName: "correction",
     title: "Assignment correction tasks",
     description: "Homework correction jobs, from upload through marking to completion.",
+    live: true,
   },
   {
     iconName: "file",
     title: "PDF processing tasks",
     description: "Standard and large PDF extraction jobs for submissions and mark schemes.",
+    live: false,
   },
   {
     iconName: "plug",
     title: "Network and integration tasks",
     description: "Google Classroom synchronisation and other external service work.",
+    live: false,
   },
   {
     iconName: "settings",
     title: "General application tasks",
     description: "Report generation, exports and maintenance work.",
+    live: false,
   },
 ];
 
 export function render() {
   return html`
     ${pageHeader({
+      eyebrow: "Background work",
       title: "Task Manager",
       description:
-        "Visibility for background work once it exists. Later phases add task states, retries, logs and cancellation here — no task system exists yet.",
-      actions: badge({ label: "Task processing planned", tone: "warning", iconName: "clock" }),
+        "Correction jobs are tracked on the AI Correction page, including queued, processing, completed and failed states. Other task categories remain planned.",
+      actions: badge({ label: "Live status on AI Correction", tone: "info", iconName: "clock" }),
     })}
     <div class="grid-2">
       ${CATEGORIES.map(
@@ -60,8 +65,10 @@ export function render() {
               compact: true,
             })}
             <div class="task-card__state">
-              ${badge({ label: "Empty", tone: "neutral" })}
-              <span>Task processing arrives in a later phase.</span>
+              ${category.live
+                ? badge({ label: "See AI Correction", tone: "info" })
+                : badge({ label: "Planned · later phase", tone: "neutral" })}
+              <span>${category.live ? "Open the AI Correction page for live correction-job status." : "This category becomes active in a later phase."}</span>
             </div>
           </section>
         `,
