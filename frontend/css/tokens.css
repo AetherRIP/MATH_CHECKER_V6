@@ -1,0 +1,112 @@
+/* Math Checker V6 — design tokens.
+ *
+ * Every color, spacing, radius, type and shadow value used anywhere in the
+ * application is defined here first. Change a token and the whole interface
+ * follows; never hard-code a palette value in a component stylesheet.
+ *
+ * Palette: near-black navy console. One elevated surface level. Turquoise is
+ * reserved for the active state and the primary action — it never becomes
+ * decoration.
+ */
+
+:root {
+  /* ---- Surfaces ---- */
+  --color-bg: #060B14;
+  --color-bg-raised: #0A101C;
+  --color-sidebar: #0A101C;          /* kept for reduced specificity in old sheets */
+  --color-card: #0D1524;
+  --color-elevated: #131E31;
+  --color-input: #0B1322;
+  --color-inset: #080E19;
+
+  /* ---- Accent (action + active only) ---- */
+  --color-accent: #2DD4BF;
+  --color-accent-hover: #5EEAD4;
+  --color-accent-soft: rgba(45, 212, 191, 0.10);
+  --color-accent-strong: rgba(45, 212, 191, 0.20);
+  --color-accent-line: rgba(45, 212, 191, 0.35);
+  --color-on-accent: #04211D;
+
+  /* ---- Text ---- */
+  --color-text: #EDF2F9;
+  --color-text-secondary: #9CA9BF;
+  --color-text-muted: #64748F;
+  --color-text-faint: #47556A;
+
+  /* ---- Lines & overlays ---- */
+  --color-border: #1B2639;
+  --color-border-strong: #2A3A52;
+  --color-border-subtle: #131C2C;
+  --color-overlay: rgba(3, 7, 15, 0.72);
+
+  /* ---- Status ---- */
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-error: #FB7185;
+  --color-info: #7DA7F5;
+  --color-success-soft: rgba(52, 211, 153, 0.10);
+  --color-warning-soft: rgba(251, 191, 36, 0.10);
+  --color-error-soft: rgba(251, 113, 133, 0.10);
+  --color-info-soft: rgba(125, 167, 245, 0.10);
+
+  /* ---- Typography (system fonts only — nothing is fetched remotely) ---- */
+  --font-sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.1875rem;
+  --text-xl: 1.45rem;
+  --text-2xl: 1.85rem;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- Spacing scale ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---- Radii: tighter, console-like ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* ---- Shadows: quieter, edge-focused ---- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.42);
+  --shadow-glow: 0 0 0 1px var(--color-accent-line);
+
+  /* ---- Motion (CSS transitions only) ---- */
+  --transition-fast: 110ms ease;
+  --transition-base: 170ms ease;
+
+  /* ---- Layout ---- */
+  --rail-width: 232px;
+  --topbar-height: 56px;
+  --content-max: 1480px;
+
+  /* ---- Focus ring ---- */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+
+  /* ---- Density-dependent metrics ---- */
+  --space-card-padding: var(--space-5);
+  --space-row-y: var(--space-3);
+}
+
+/* Compact density shrinks card and row padding for high-density work. */
+:root[data-density="compact"] {
+  --space-card-padding: var(--space-4);
+  --space-row-y: var(--space-2);
+}
